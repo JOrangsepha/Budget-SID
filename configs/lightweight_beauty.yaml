@@ -1,0 +1,95 @@
+# Frozen low-resource Beauty path.
+# GRID's flat configs default to google/flan-t5-xl and strategy: ddp.
+# This file is rejected by the loader if either of those comes back.
+
+schema_version: 1
+dataset:
+  name: beauty
+  grid_subdir: amazon_data/beauty
+  splits:
+    train: training
+    val: evaluation
+    test: testing
+    items: items
+  audit:
+    train_history_excludes_target: true
+
+text_encoder:
+  name: sentence-transformers/all-MiniLM-L6-v2
+  embedding_dim: 384
+  frozen: true
+  train_encoder: false
+
+semantic_id:
+  method: rq_kmeans
+  num_codebooks: 3
+  codebook_width: 256
+  dedup_digit: true
+  num_hierarchies: 4
+
+model:
+  backbone: lightweight_t5
+  d_model: 128
+  num_heads: 4
+  d_ff: 512
+  num_encoder_layers: 4
+  num_decoder_layers: 4
+  dropout: 0.1
+  vocab_size: 256
+
+train:
+  batch_size: 16
+  grad_accum: 4
+  devices: 1
+  num_nodes: 1
+  strategy: single_device
+  accelerator: gpu
+  precision: 32-true
+  seed: 42
+
+inference:
+  beam_widths: [20, 40, 60]
+  small_beam: 20
+  large_beam: 60
+  reference_beam: 40
+  top_k: 20
+  shared_first_step: true
+  forbid_rerun_large_after_small: true
+
+benefit:
+  target: delta_ndcg@20
+  features:
+    - history_length
+    - first_step_entropy
+    - candidate_prob_gap
+    - top1_prob
+  val_user_splits: [A, B]
+  test_locked: true
+
+eval:
+  metrics:
+    - recall@20
+    - ndcg@20
+    - latency_mean
+    - latency_p95
+    - throughput
+    - peak_vram
+  slices:
+    - long_tail
+    - short_history
+  sampled_negatives: false
+  seeds: [42, 43, 44]
+  short_history_max: 5
+  long_tail_quantile: 0.2
+
+stop_gate:
+  top_fraction: 0.2
+  min_positive_mass: 0.5
+  max_positive_user_fraction: 0.5
+  min_mean_delta: 0.0
+  oracle_must_beat_reference: true
+
+grid:
+  repo: https://github.com/snap-research/GRID
+  commit: 2fe3475b2d369580234093f35d52b1a2f54d0472
+  vendor: false
