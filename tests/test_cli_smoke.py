@@ -12,6 +12,9 @@ COMMANDS = [
     "train_benefit_predictor",
     "evaluate_budgets",
     "demo",
+    "export_eval_samples",
+    "audit_eval_leakage",
+    "score_beam_ndcg",
 ]
 
 

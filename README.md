@@ -17,6 +17,7 @@ GRID 不放进本仓库，只用 `scripts/pin_grid.sh` 锁在 commit `2fe3475b2d
 - Budget allocation plus a light SID generative-recall experiment on Amazon Beauty.
 - Pinned GRID commit `2fe3475b2d369580234093f35d52b1a2f54d0472`. GRID is not vendored.
 - 2026-10-17 SeetaCloud RTX 4090: fixed beams 20/40/60 finished (exit 0). Benefit-aware stop-gate is not wired.
+- P0 eval audit does not retrain and does not claim a benefit-aware gain. It exports leak-safe history/target samples and can score NDCG@5, NDCG@10, and NDCG@20 per request. See `docs/P0_EVAL_AUDIT.md`. The 2026-10-17 `tiger_inference_flat` rankings keep the target event in the encoder input, so they are not leak-safe ΔNDCG. The logged test nDCG@5 and nDCG@10 came from `NextKTokenMasking` and are not that leak.
 - Checkpoint stays on the GPU machine. It is not in git.
 - Scripts log `SKIP_SHUTDOWN` and do not power the instance off.
 
@@ -149,6 +150,29 @@ data_loading.predict_dataloader_config.dataloader.timeout=0
 7. 止损在验证集上做。大 beam 没有集中收益，或者理想预算分配打不赢全体 beam 40，进程退出码为 2。退出码 2 表示实验前提不成立，不是程序崩溃。
 
 这次 4090 只跑了固定 beam。请求级收益感知止损还没接到 GRID `tiger_inference` 的输出上。`evaluate_budgets` 不带 `--smoke` 时仍然只给命令计划（退出码 1）。
+
+## P0 评测审计
+
+固定 beam 的排序要能离线算 ΔNDCG@20，得先证明每条请求的历史里没有这次要预测的交互，并且 beam 20/40/60 用的是同一批样本。这一步不重新训练，也不宣称收益感知有收益。
+
+GRID 的 `tiger_train_flat` 用 `NextKTokenMasking` 把最后一个 Semantic ID 组遮住，所以日志里的测试 nDCG@5、nDCG@10 不是「模型看见了目标」这种泄漏。`tiger_inference_flat` 用的 `collate_fn_inference_for_sequence` 只做补齐和截断，截断留的是序列尾部，目标事件还在编码器输入里。2026-10-17 那三份 beam 排序因此不能直接当泄漏安全的 ΔNDCG。
+
+Beauty 是按时间的 leave-one-out：同一 `user_id` 会出现在 training、evaluation、testing。用户重叠不是标签泄漏。标签泄漏指的是目标那一次交互还在历史里。更早买过同一个商品可以留下。`assert_test_unused` 仍只用于脚本里「每个用户只属于一个切分」的烟雾测试；Beauty 走 `temporal_loo`，锁的是测试事件，不是用户 id。
+
+```bash
+python -m budget_sid export_eval_samples --smoke
+python -m budget_sid audit_eval_leakage --smoke
+python -m budget_sid score_beam_ndcg --smoke
+```
+
+SeetaCloud 上对已有 Beauty 文件（不在 git 里）：
+
+```bash
+# 仓库在 /root/autodl-tmp/Budget-SID
+SID_PATH=/path/to/semantic_ids.pt bash scripts/p0_eval_audit.sh
+```
+
+字段、审计结论和 P1 怎么接这些文件，写在 `docs/P0_EVAL_AUDIT.md`。
 
 ## TODO
 

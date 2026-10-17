@@ -87,6 +87,8 @@ refuse_flan() {
   fi
 }
 
+# P0: these beams use tiger_inference_flat, whose collate keeps the target
+# event. Score them only after scripts/p0_eval_audit.sh. See docs/P0_EVAL_AUDIT.md.
 run_fixed_beams() {
   local k hydra_ckpt rc marker log
   IFS=' ' read -r -a TOP_K_LIST <<< "${TOP_KS:-20 40 60}"
