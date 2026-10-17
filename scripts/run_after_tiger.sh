@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # Fixed-beam TIGER inference after tiger_train_flat.
 #
+# P0: collate_fn_inference_for_sequence keeps the last event. Rankings from
+# this script are not leak-safe ΔNDCG inputs. Export history with
+# scripts/p0_eval_audit.sh before scoring. See docs/P0_EVAL_AUDIT.md.
+#
 # The 2026-10-17 SeetaCloud Beauty run already finished (top_k 20/40/60,
 # exit 0). This script records that invocation. It does not power the
 # machine off. A .done marker is written only when python returns 0.

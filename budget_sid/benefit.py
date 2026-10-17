@@ -9,7 +9,7 @@ import numpy as np
 from budget_sid.constants import LARGE_BEAM, REFERENCE_BEAM, SMALL_BEAM
 from budget_sid.errors import TestLeakError
 from budget_sid.features import FEATURE_NAMES, stack_features
-from budget_sid.splits import assert_test_unused, split_val_users
+from budget_sid.splits import USER_PROTOCOLS, assert_test_events_unused, assert_test_unused, split_val_users
 
 
 @dataclass
@@ -119,20 +119,33 @@ class BenefitTrainingResult:
     n_train_rows: int
 
 
-def train_on_split_a(records, seed: int = 42) -> BenefitTrainingResult:
+def train_on_split_a(records, seed: int = 42, *, user_protocol: str = "disjoint_users") -> BenefitTrainingResult:
     """Fit on validation users A and choose the budget threshold on users B.
 
     ``records`` are mappings with ``user_id``, ``split``, ``features`` and
-    ``delta_ndcg``. Any ``split == "test"`` row, or any test id overlapping A
-    or B, aborts the run.
+    ``delta_ndcg``. Test rows are never fit. ``user_protocol="disjoint_users"``
+    (the scripted smoke) also rejects a test user id inside A or B.
+    ``user_protocol="temporal_loo"`` allows that shared id and instead rejects
+    a reused test ``request_id``. Beauty leave-one-out needs the latter.
     """
+    if user_protocol not in USER_PROTOCOLS:
+        raise ValueError(f"unknown user_protocol {user_protocol!r}; expected one of {USER_PROTOCOLS}")
     rows = list(records)
     test_ids = [str(row["user_id"]) for row in rows if row["split"] == "test"]
     val_rows = [row for row in rows if row["split"] == "val"]
     if any(row["split"] == "test" for row in val_rows):
         raise TestLeakError("test rows were mixed into the validation training set")
     split_a, split_b = split_val_users((row["user_id"] for row in val_rows), seed=seed)
-    assert_test_unused(split_a | split_b, test_ids)
+    if user_protocol == "disjoint_users":
+        assert_test_unused(split_a | split_b, test_ids)
+    else:
+        relevant = [row for row in rows if row["split"] in {"val", "test"}]
+        missing = [row for row in relevant if not row.get("request_id")]
+        if missing:
+            raise ValueError("temporal_loo requires request_id on every val and test row")
+        test_events = [str(row["request_id"]) for row in relevant if row["split"] == "test"]
+        used_events = [str(row["request_id"]) for row in val_rows]
+        assert_test_events_unused(used_events, test_events)
     train_rows = [row for row in val_rows if str(row["user_id"]) in split_a]
     budget_rows = [row for row in val_rows if str(row["user_id"]) in split_b]
     if any(row["split"] != "val" for row in train_rows + budget_rows):

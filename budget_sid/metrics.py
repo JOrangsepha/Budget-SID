@@ -79,6 +79,16 @@ def peak_vram_mb(samples=None) -> float:
     return float(torch.cuda.max_memory_allocated() / (1024**2))
 
 
+def retrieval_at_ks(predicted, relevant, ks=(5, 10, 20)) -> dict:
+    """Binary recall and NDCG at each cutoff. The @20 pair matches ``score_retrieval``."""
+    scores = {}
+    for k in ks:
+        cutoff = int(k)
+        scores[f"recall@{cutoff}"] = recall_at_k(predicted, relevant, k=cutoff)
+        scores[f"ndcg@{cutoff}"] = ndcg_at_k(predicted, relevant, k=cutoff)
+    return scores
+
+
 def score_retrieval(predicted, relevant, k: int = TOP_K, sampled_negatives: bool = False) -> dict:
     if sampled_negatives:
         raise ValueError(
