@@ -18,6 +18,7 @@ COMMANDS = [
     "build_leak_safe_predict",
     "export_leak_safe_rankings",
     "analyze_benefit",
+    "replay_budgets",
 ]
 
 

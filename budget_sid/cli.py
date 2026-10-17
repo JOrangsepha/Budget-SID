@@ -7,6 +7,7 @@ import json
 import sys
 
 from budget_sid.analyze_benefit import command_analyze_benefit
+from budget_sid.replay import command_replay_budgets
 from budget_sid.beam_score import command_score_beam_ndcg
 from budget_sid.config import default_config_path, load_config
 from budget_sid.eval_audit import command_audit_eval_leakage
@@ -33,6 +34,7 @@ COMMANDS = (
     "build_leak_safe_predict",
     "export_leak_safe_rankings",
     "analyze_benefit",
+    "replay_budgets",
 )
 
 
@@ -124,6 +126,50 @@ def build_parser() -> argparse.ArgumentParser:
                 help="summary.json; required to confirm auditable_for_delta_ndcg before P2",
             )
             command.add_argument("--output", default=None, help="optional JSON report path")
+        if name == "replay_budgets":
+            command.add_argument(
+                "--per-request",
+                default=None,
+                help="outputs/leak_safe_beams/per_request.jsonl (gitignored). Beam nDCG labels, not logits.",
+            )
+            command.add_argument(
+                "--summary",
+                default=None,
+                help="summary.json beside the per-request file; a sibling summary.json is read when this is omitted",
+            )
+            command.add_argument(
+                "--samples",
+                default=None,
+                help="eval_samples.jsonl joined on request_id for history_length only",
+            )
+            command.add_argument(
+                "--features",
+                default=None,
+                help="JSONL of request_id plus first-step features or logits. Labels in this file are ignored.",
+            )
+            command.add_argument(
+                "--predict-index",
+                default=None,
+                help="predict_index.jsonl; n_history is used as history_length when features omit it",
+            )
+            command.add_argument("--output-dir", default=None)
+            command.add_argument("--seed", type=int, default=None)
+            command.add_argument(
+                "--seeds",
+                default=None,
+                help="comma-separated seeds, for example 42,43,44. Overrides --seed.",
+            )
+            command.add_argument(
+                "--user-protocol",
+                default="auto",
+                choices=("auto", "disjoint_users", "temporal_loo"),
+                help="auto uses temporal_loo when a validation user also appears in test",
+            )
+            command.add_argument(
+                "--dry-run",
+                action="store_true",
+                help="score the replay and skip writing --output-dir",
+            )
     return parser
 
 
@@ -186,6 +232,21 @@ def main(argv: list[str] | None = None) -> int:
             summary=args.summary,
             smoke=smoke,
             output=args.output,
+        )
+    elif args.command == "replay_budgets":
+        payload = command_replay_budgets(
+            config,
+            per_request=args.per_request,
+            summary=args.summary,
+            samples=args.samples,
+            features=args.features,
+            predict_index=args.predict_index,
+            output_dir=args.output_dir,
+            seed=args.seed,
+            seeds=args.seeds,
+            user_protocol=args.user_protocol,
+            smoke=smoke,
+            dry_run=args.dry_run,
         )
     elif args.command == "score_beam_ndcg":
         payload = command_score_beam_ndcg(

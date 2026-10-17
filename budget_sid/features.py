@@ -66,3 +66,26 @@ def stack_features(rows: list[dict[str, float]]) -> np.ndarray:
     if not rows:
         raise ValueError("no feature rows to stack")
     return np.array([[row[name] for name in FEATURE_NAMES] for row in rows], dtype=np.float64)
+
+
+def stack_named_features(rows: list[dict], names) -> np.ndarray:
+    """Stack a subset of ``FEATURE_NAMES`` in the given order.
+
+    P2 uses this when the joined file has only some of the first-step
+    features. Missing logit columns are left out. They are not imputed.
+    """
+    names = tuple(names)
+    if not rows:
+        raise ValueError("no feature rows to stack")
+    if not names:
+        raise ValueError("no feature names to stack")
+    unknown = [name for name in names if name not in FEATURE_NAMES]
+    if unknown:
+        raise ValueError(f"unknown feature names: {unknown}")
+    matrix = []
+    for row in rows:
+        try:
+            matrix.append([float(row[name]) for name in names])
+        except KeyError as exc:
+            raise ValueError(f"feature row is missing {exc}") from exc
+    return np.array(matrix, dtype=np.float64)
