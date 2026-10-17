@@ -23,10 +23,12 @@ from budget_sid.grid_first_step import (
     HYDRA_DATA_FOLDER,
     HYDRA_TIMEOUT,
     HYDRA_WORKERS,
+    bind_trainer_and_predict_loader,
     first_step_candidate_logits,
     hydra_overrides,
     predict_keys_from_batch,
     rows_from_batches,
+    unwrap_predict_dataloader,
 )
 from budget_sid.leak_safe_predict import history_only_rows, write_predict_dataset
 from budget_sid.replay import command_replay_budgets
@@ -113,6 +115,59 @@ def test_missing_logits_are_an_error_and_flat_zeros_are_not_invented():
     assert rows[1]["history_length"] == 4.0
     assert rows[0]["raw_logits_stored"] is False
     assert rows[0]["includes_target_event"] is False
+
+
+def test_trainer_is_attached_before_setup_and_the_loader_tuple_is_unwrapped():
+    class _Trainer:
+        world_size = 1
+        global_rank = 0
+
+    class _LightningModule:
+        trainer = None
+
+    batches = [_Batch([1]), _Batch([0])]
+    trainer = _Trainer()
+    module = _LightningModule()
+
+    class _DataModule:
+        def __init__(self):
+            self.trainer = None
+            self.setup_stage = None
+            self.trainer_during_setup = None
+            self.module_trainer_during_setup = None
+
+        def setup(self, stage=None):
+            self.setup_stage = stage
+            self.trainer_during_setup = self.trainer
+            self.module_trainer_during_setup = module.trainer
+
+        def predict_dataloader(self):
+            return (batches,)
+
+    datamodule = _DataModule()
+    with pytest.raises(MissingFirstStepLogits, match="Lightning Trainer"):
+        bind_trainer_and_predict_loader(module, datamodule, None)
+    assert datamodule.setup_stage is None
+
+    loader = bind_trainer_and_predict_loader(module, datamodule, trainer)
+    assert datamodule.setup_stage == "predict"
+    assert datamodule.trainer_during_setup is trainer
+    assert datamodule.module_trainer_during_setup is trainer
+    assert module.trainer is trainer
+    assert loader is batches
+    assert unwrap_predict_dataloader(batches) is batches
+
+    model = _Module([3.0, 0.0, 0.0, 0.0])
+    rows = rows_from_batches(model, loader, _index())
+    assert [row["request_id"] for row in rows] == ["val:a:2", "val:b:4"]
+    assert [row["predict_key"] for row in rows] == [0, 1]
+    # The 1-tuple is not a batch. Iterating it yields the loader.
+    with pytest.raises(MissingFirstStepLogits, match="user_id_list"):
+        rows_from_batches(model, (batches,), _index())
+    with pytest.raises(MissingFirstStepLogits, match="2-tuple"):
+        unwrap_predict_dataloader((batches, batches))
+    with pytest.raises(MissingFirstStepLogits, match="nothing"):
+        unwrap_predict_dataloader(None)
 
 
 def test_dataloader_order_does_not_reorder_request_ids():
