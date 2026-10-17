@@ -12,6 +12,7 @@ from budget_sid.beam_score import command_score_beam_ndcg
 from budget_sid.config import default_config_path, load_config
 from budget_sid.eval_audit import command_audit_eval_leakage
 from budget_sid.eval_samples import command_export_eval_samples
+from budget_sid.first_step_dump import command_dump_first_step_features
 from budget_sid.leak_safe_predict import command_build_leak_safe_predict, command_export_leak_safe_rankings
 from budget_sid.experiment import (
     command_build_semantic_ids,
@@ -35,6 +36,7 @@ COMMANDS = (
     "export_leak_safe_rankings",
     "analyze_benefit",
     "replay_budgets",
+    "dump_first_step_features",
 )
 
 
@@ -67,6 +69,7 @@ def build_parser() -> argparse.ArgumentParser:
             "score_beam_ndcg",
             "build_leak_safe_predict",
             "export_leak_safe_rankings",
+            "dump_first_step_features",
         }:
             command.add_argument(
                 "--dry-run",
@@ -114,6 +117,26 @@ def build_parser() -> argparse.ArgumentParser:
             command.add_argument("--sid-map", default=None, help="JSON/JSONL/pt map from semantic id to item id")
             command.add_argument("--beam", type=int, default=None)
             command.add_argument("--output", default=None, help="beam_<k>.jsonl with request_id and ranked_items")
+        if name == "dump_first_step_features":
+            command.add_argument(
+                "--predict-dir",
+                default=None,
+                help="history-only folder from build_leak_safe_predict (not GRID's testing split)",
+            )
+            command.add_argument(
+                "--output",
+                default=None,
+                help="first_step_features.jsonl joined on request_id in predict_index order",
+            )
+            command.add_argument("--ckpt", default=None, help="tiger_train_flat checkpoint; required on GPU")
+            command.add_argument("--semantic-id-path", default=None)
+            command.add_argument("--data-dir", default=None, help="Beauty data dir passed through to tiger_inference_flat")
+            command.add_argument("--grid-dir", default=None, help="pinned GRID checkout (commit 2fe3475)")
+            command.add_argument(
+                "--per-request",
+                default=None,
+                help="optional per_request.jsonl; request_id order must match the predict index",
+            )
         if name == "analyze_benefit":
             command.add_argument(
                 "--per-request",
@@ -232,6 +255,18 @@ def main(argv: list[str] | None = None) -> int:
             summary=args.summary,
             smoke=smoke,
             output=args.output,
+        )
+    elif args.command == "dump_first_step_features":
+        payload = command_dump_first_step_features(
+            smoke=smoke,
+            predict_dir=args.predict_dir,
+            output=args.output,
+            ckpt=args.ckpt,
+            semantic_id_path=args.semantic_id_path,
+            data_dir=args.data_dir,
+            grid_dir=args.grid_dir,
+            per_request=args.per_request,
+            dry_run=args.dry_run,
         )
     elif args.command == "replay_budgets":
         payload = command_replay_budgets(

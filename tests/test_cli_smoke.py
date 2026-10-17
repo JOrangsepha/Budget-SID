@@ -19,6 +19,7 @@ COMMANDS = [
     "export_leak_safe_rankings",
     "analyze_benefit",
     "replay_budgets",
+    "dump_first_step_features",
 ]
 
 
@@ -75,6 +76,17 @@ def test_smoke_cli(command, repo_root):
         assert payload["test_metrics"]["fixed_60"]["slices"]["long_tail"]["recall@20"] == pytest.approx(1.0)
         assert payload["test_metrics"]["fixed_20"]["slices"]["long_tail"]["recall@20"] == pytest.approx(0.0)
         assert payload["test_metrics"]["fixed_40"]["max_recommendations"] <= 20
+    if command == "dump_first_step_features":
+        assert payload["invented_logits"] is False
+        assert payload["includes_target_event"] is False
+        assert payload["p3_started"] is False
+        assert payload["grid_pin_changed"] is False
+        assert payload["feature_names"] == [
+            "history_length",
+            "first_step_entropy",
+            "candidate_prob_gap",
+            "top1_prob",
+        ]
     if command == "demo":
         assert payload["policy"] == "benefit_aware"
         assert payload["beam_width"] in (20, 60)

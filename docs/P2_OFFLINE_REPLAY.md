@@ -80,22 +80,34 @@ The ridge features, from `budget_sid.features`, are:
 
 Priority for history length is the list above. A disagreement between samples and `target_position` is counted. Samples win. Incomplete columns are dropped for every validation row. They are not imputed.
 
-### Follow-up blocker
+### Recorded partial replay
 
-Full P2 needs a first-step dump joined on `request_id`:
+A SeetaCloud replay that only had `history_length` (from `target_position`) fit ridge on that column alone. Entropy was skipped because `first_step_entropy`, `candidate_prob_gap`, and `top1_prob` were not in the joined features. That run captured about 0% of the positive-Δ mass and tied or lost to random (nDCG@20 about 0.0566 versus about 0.0567). This checkout does not recompute those two numbers. They are why the four-feature file has to be produced before anyone reads the ridge row as a full P2 result.
 
-```text
-history_length, first_step_entropy, candidate_prob_gap, top1_prob
-```
-
-or `history_length` plus the first-step logit vector. Produce those with `extract_features` after the shared first decoding step. Do not fill the columns with placeholders. Until that file exists, the SeetaCloud path still runs:
+Until `first_step_features.jsonl` is joined, a replay still behaves that way:
 
 - entropy is skipped
-- ridge uses whatever non-label columns were actually joined (often only `history_length` via `target_position`)
+- ridge uses whatever non-label columns were actually joined
 - `features.full_p2_ready` is false and `features.full_p2_blockers` lists the missing names
 - `invented_logits` is false
 
-That run is an honest partial replay. It is not the four-feature model.
+That run is an honest partial replay. It is not the four-feature model. Do not fill the columns with placeholders.
+
+### First-step dump
+
+`dump_first_step_features` writes `first_step_features.jsonl`. Each row has `request_id`, `history_length`, `first_step_entropy`, `candidate_prob_gap`, and `top1_prob`. The four feature columns are `extract_features` on the hierarchy-0 candidate logits. The raw vector is not stored, and it is not reconstructed later.
+
+Alignment with `outputs/leak_safe_beams/per_request.jsonl`:
+
+1. `build_leak_safe_predict` writes `predict_index.jsonl` in eval-sample order. `predict_key` is `0 .. n-1`. `sequence_data` is the exported history. The target event is not appended. `n_history` is that length.
+2. `scripts/run_leak_safe_beams.sh` points `tiger_inference_flat` at that folder. GRID's `user_id` field is the `predict_key`. `score_beam_ndcg` writes `per_request.jsonl` in the same eval-sample order.
+3. The dump reads the same folder. It joins logits on `user_id_list` (the `predict_key`), then emits rows in index order. `history_length` is `n_history`. When `--per-request` is passed, the request-id sequence must match exactly. A dataloader that yields keys out of order still writes index order. Batch position is not a join key.
+
+Pinned GRID `SemanticIDEncoderDecoder.generate` (commit `2fe3475`) computes hierarchy-0 `candidate_logits` with `encoder_forward_pass`, `decoder_forward_pass(future_ids=None)`, and `decoder.decoder_mlp[0]`, then drops them inside `_beam_search_one_step`. `predict_step` returns semantic ids only, so the beam pickles have no logits. The dump calls those same three methods and keeps the matrix. It does not run hierarchies 1..3, so `top_k` does not change the file: one dump covers beams 20, 40, and 60. The pin stays `2fe3475`. The checkout is not edited.
+
+If the logit tensor, the MLP, the checkpoint `state_dict`, or `user_id_list` is missing, the process exits non-zero and does not write a zero-filled file. A partial `load_state_dict` is refused, because a randomly initialized `decoder_mlp` would look like real logits.
+
+P3 stays gated until benefit-aware routing beats random and entropy on positive-Δ mass and nDCG@20 under the same quota. This dump does not start P3, does not time decoding, and does not claim an online win.
 
 ## How to run
 
@@ -118,9 +130,31 @@ python -m budget_sid replay_budgets \
   --output-dir outputs/p2_replay
 ```
 
-Add `--features /path/to/first_step_features.jsonl` when the logit dump exists. Each row needs `request_id` and either the four feature fields or `history_length` plus `logits`. `--samples` is optional if `target_position` is present. `--dry-run` prints the summary and does not write `--output-dir`.
+Produce the feature file on the GPU machine, from the same history-only folder the beams used. `DRY_RUN=1` checks that folder and the checkpoint file and does not load the model. A missing checkpoint exits non-zero. The script prints `SKIP_SHUTDOWN` and does not power the machine off.
 
-`outputs/` is gitignored. The command writes `replay_summary.json` and `assignments_seed<seed>.jsonl`.
+```bash
+SID_PATH=/path/to/semantic_ids.pt bash scripts/dump_first_step_features.sh
+```
+
+That writes `outputs/leak_safe_beams/first_step_features.jsonl` next to `per_request.jsonl`. Then re-run the replay. This is still offline allocation. It is not P3.
+
+```bash
+python -m budget_sid replay_budgets \
+  --per-request outputs/leak_safe_beams/per_request.jsonl \
+  --summary outputs/leak_safe_beams/summary.json \
+  --features outputs/leak_safe_beams/first_step_features.jsonl \
+  --user-protocol temporal_loo \
+  --seeds 42,43,44 \
+  --output-dir outputs/p2_replay
+```
+
+`--samples` is optional if `target_position` is present. The feature file's `history_length` wins over it. `--dry-run` prints the summary and does not write `--output-dir`.
+
+`outputs/` is gitignored. The replay command writes `replay_summary.json` and `assignments_seed<seed>.jsonl`. The dump also writes `first_step_features_manifest.json` beside the jsonl. CPU smoke, with the scripted recommender rather than GRID logits:
+
+```bash
+python -m budget_sid dump_first_step_features --smoke
+```
 
 ## What this is not
 

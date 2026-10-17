@@ -17,3 +17,11 @@ class RoutingProtocolError(RuntimeError):
 
 class HistoryLeakError(ValueError):
     """The target interaction appears inside the history used to predict it."""
+
+
+class MissingFirstStepLogits(RuntimeError):
+    """The pinned GRID model did not return a usable first-step logit tensor.
+
+    Callers must stop. Filling the missing tensor with zeros would look like a
+    real uniform distribution to the P2 replay.
+    """
