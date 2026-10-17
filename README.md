@@ -18,7 +18,7 @@ GRID 不放进本仓库，只用 `scripts/pin_grid.sh` 锁在 commit `2fe3475b2d
 - Pinned GRID commit `2fe3475b2d369580234093f35d52b1a2f54d0472`. GRID is not vendored.
 - 2026-10-17 SeetaCloud RTX 4090: fixed beams 20/40/60 finished (exit 0). Benefit-aware stop-gate is not wired to those GRID outputs.
 - P1 reads leak-safe `per_request.jsonl` when that file is present. The transcribed SeetaCloud summary does not clear P2. The validation pass did (`p2_worth_doing=true`). See `docs/P1_BENEFIT_ANALYSIS.md` and `docs/P2_OFFLINE_REPLAY.md`.
-- P2 is offline allocation quality: validation users A/B, ridge on A, one shared large-beam quota on B (mean nDCG@20, mean beam, positive-Δ mass versus the oracle). It is not a latency result and not an online benefit-aware claim. `per_request.jsonl` has no first-step logits; the replay reports that gap instead of filling it.
+- P2 is offline allocation quality: validation users A/B, ridge on A, one shared large-beam quota on B (mean nDCG@20, mean beam, positive-Δ mass versus the oracle). It is not a latency result and not an online benefit-aware claim. A history-length-only replay captured about 0% of the positive-Δ mass and tied or lost to random (nDCG@20 about 0.0566 vs about 0.0567); entropy was skipped. `scripts/dump_first_step_features.sh` writes leak-safe `first_step_features.jsonl` joined on `request_id`. Re-run `replay_budgets --features` after that file exists. P3 stays gated until benefit beats random and entropy on positive-Δ mass and nDCG@20 under the same quota.
 - P0 eval audit does not retrain and does not claim a benefit-aware gain. It exports leak-safe history/target samples and can score NDCG@5, NDCG@10, and NDCG@20 per request. See `docs/P0_EVAL_AUDIT.md`. The 2026-10-17 `tiger_inference_flat` rankings keep the target event in the encoder input, so they are not leak-safe ΔNDCG. Re-run beams with `scripts/run_leak_safe_beams.sh` on the exported history. The logged test nDCG@5 and nDCG@10 came from `NextKTokenMasking` and are not that leak.
 - Checkpoint stays on the GPU machine. It is not in git.
 - Scripts log `SKIP_SHUTDOWN` and do not power the instance off.
@@ -201,19 +201,24 @@ P2 只回答分配质量：验证用户分成不相交的 A / B，A 上用已有
 
 B 上的指标是平均 nDCG@20、平均 beam、以及各策略抓到的正 Δ 质量相对 oracle。MSE 只是拟合诊断。选择请求时不读该请求的 Δ。测试事件不参与。
 
-`per_request.jsonl` 没有首步 logits。没有 `--features` 时，熵比较会跳过；能接上的通常只有 `target_position` 当成的历史长度。缺的 `first_step_entropy`、`candidate_prob_gap`、`top1_prob` 写在 `full_p2_blockers` 里，不补假 logits。这不是延迟，也不是线上收益感知。延迟是 P3。
+`per_request.jsonl` 没有首步 logits。只接上 `history_length` 的那次 Ridge 大约抓到 0% 的正 Δ 质量，nDCG@20 约 0.0566，和随机的约 0.0567 打平或更差；熵比较被跳过。这组数是报告值，本仓库没有重算。缺列写在 `full_p2_blockers` 里，不补假 logits。
+
+首步特征用泄漏安全的历史目录（目标事件不在历史里），按 `predict_index.jsonl` 的 `request_id` 顺序写出。GRID 的 `predict_step` 不返回 logits；dump 调用的是 pinned `generate()` 在第 0 层算出 `candidate_logits` 的那三步，然后停住。checkpoint 或张量缺失就非零退出，不写零向量。这不是延迟，也不是线上收益感知。P3 仍然关上，直到同一名额下收益感知在正 Δ 质量和 nDCG@20 上同时超过随机和熵。
 
 ```bash
 python -m budget_sid replay_budgets --smoke
+python -m budget_sid dump_first_step_features --smoke
+SID_PATH=/path/to/semantic_ids.pt bash scripts/dump_first_step_features.sh
 python -m budget_sid replay_budgets \
   --per-request outputs/leak_safe_beams/per_request.jsonl \
   --summary outputs/leak_safe_beams/summary.json \
+  --features outputs/leak_safe_beams/first_step_features.jsonl \
   --user-protocol temporal_loo \
   --seeds 42,43,44 \
   --output-dir outputs/p2_replay
 ```
 
-字段和 SeetaCloud 命令在 `docs/P2_OFFLINE_REPLAY.md`。
+字段、对齐方式和 SeetaCloud 命令在 `docs/P2_OFFLINE_REPLAY.md`。
 
 ## TODO
 
@@ -230,6 +235,7 @@ python -m budget_sid replay_budgets \
 
 未完成：
 
+- [ ] 在 SeetaCloud 上跑 `bash scripts/dump_first_step_features.sh`，写出 `outputs/leak_safe_beams/first_step_features.jsonl`，再用 `python -m budget_sid replay_budgets … --features outputs/leak_safe_beams/first_step_features.jsonl` 重跑 P2。P3 仍然关上，直到同一名额下收益感知在正 Δ 质量和 nDCG@20 上同时超过随机和熵。
 - [ ] 把请求级收益预测接到 GRID `tiger_inference` 的输出上（ΔNDCG@20）
 - [ ] 验证集 A 训练收益模型，B 上选平均 beam ≤ 40 的阈值
 - [ ] 在验证集上跑止损。退出码 2 就停，不要再加路由
