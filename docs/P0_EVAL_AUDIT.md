@@ -40,6 +40,7 @@ Each record has at least `request_id`, `user_id`, `split`, `history`, `target`, 
 - a spot-check list of request ids (the check itself is not a sample)
 - user-overlap counts, with overlap marked as not label leakage
 - whether train / val / test sequences are leave-one-out prefixes
+- `protocol_exact` is that strict check. `protocol_verified` is also true when every user who has all three splits is either exact or a one-item tail window (see below)
 - the collate finding above
 - `tiger_inference_flat_rankings_leak_safe` (false when the prefixes match, because the stored tail is the target and the inference collate keeps it)
 
@@ -95,11 +96,48 @@ Each ranking row needs `request_id` or a `user_id` that matches one sample, and 
 
 `--ranking-source grid_tiger_inference_flat` is what `scripts/p0_eval_audit.sh` uses when `RANKINGS_DIR` points at the existing beam exports. Read the numbers as contaminated until the beams are re-run on the exported history.
 
+## Truncation and `protocol_verified`
+
+On the SeetaCloud Beauty export (`n=67089`, 22363 per split) the event check passed: `n_target_event_in_history=0`. The strict prefix check did not, for about 1019 users. Those stored sequences are still usable.
+
+GRID's inference collate keeps at most `sequence_length=120` tokens, which is 30 items when `num_hierarchies=4`. The P5 files can also already be a tail of a longer interaction list. After that cap, val is not byte-for-byte `test[:-1]`: both sequences are length L, and `val[1:] == test[:-1]` (the window slid by the new target). The same slide applies to train versus val. `protocol_exact` stays false. `protocol_verified` is true when every all-split user is either an exact prefix or that one-item window. `status` is `verified_with_truncation`. A mismatch that is not that window still fails the audit.
+
+The exported `history` is the strict prefix of the stored sequence. It does not contain the target event. A long history is trimmed again at inference time, from the left, and that trim still does not see the target. Do not treat `protocol_exact=false` as label leakage when `n_target_event_in_history=0`.
+
+## Leak-safe beams
+
+`scripts/run_leak_safe_beams.sh` is the GPU step after the export. It does not retrain. It does not read the 2026-10-17 `tiger_inference_flat` pickles. Those files were produced by `collate_fn_inference_for_sequence` on sequences that end with the target event. Scoring them with `--ranking-source leak_safe_history` would mark a contaminated delta as auditable. Do not do that.
+
+What the script runs:
+
+1. `build_leak_safe_predict` reads `eval_samples.jsonl` and writes `outputs/leak_safe_beams/predict/`.
+2. `history_only.tfrecord.gz` has `sequence_data` (history item ids only) and `user_id` (a dense `predict_key` in `0 .. n-1`). Raw user ids collide across splits, and GRID's merged prediction tensor indexes by `user_id`, so the key cannot be the raw id. `predict_index.jsonl` maps `predict_key` to `request_id`.
+3. `tiger_inference_flat` is pointed at that folder with the existing Beauty checkpoint. The override that exists on the experiment is `data_loading.predict_dataloader_config.dataloader.data_folder`. Workers and timeout stay 0. `ckpt_path='$CKPT'`. No `test_dataloader_config`. No autodl poweroff.
+4. `export_leak_safe_rankings` reads `merged_predictions.pkl` (`user_id`, `semantic_ids`), decodes codes with the SID map, and writes `rankings/beam_20.jsonl`, `beam_40.jsonl`, and `beam_60.jsonl`. Each row has `request_id` and `ranked_items`. `predict_key` is `0 .. n-1` with no gaps, which is what GRID's merged tensor index expects. The scorer reads the pickle list, joined through `predict_index.jsonl`.
+5. `score_beam_ndcg --ranking-source leak_safe_history` writes `per_request.jsonl` and `summary.json` under `outputs/leak_safe_beams/`. `auditable_for_delta_ndcg` is true only for that source.
+
+CPU smoke, no GRID call:
+
+```bash
+python -m budget_sid build_leak_safe_predict --smoke
+python -m budget_sid export_leak_safe_rankings --smoke
+```
+
+`DRY_RUN=1` builds the TFRecords and prints the GPU command.
+
+SeetaCloud one-liner, from `/root/autodl-tmp/Budget-SID`, after `scripts/p0_eval_audit.sh` has written the samples. `CKPT` defaults to the 2026-10-17 early-stopped checkpoint. `SID_PATH` is the RQ-KMeans semantic-id tensor:
+
+```bash
+SID_PATH=/path/to/semantic_ids.pt bash scripts/run_leak_safe_beams.sh
+```
+
+`SKIP_BUILD=1` reuses `outputs/leak_safe_beams/predict/`. The script prints `SKIP_SHUTDOWN` and leaves the instance on.
+
 ## P1
 
 P1 should consume these files and still not start from the 2026-10-17 beam exports:
 
-1. Encode `history` from `eval_samples.jsonl` (the target event is already removed) and re-run fixed beams 20, 40, and 60.
-2. Score with `--ranking-source leak_safe_history`.
+1. Run `scripts/run_leak_safe_beams.sh` so beams 20, 40, and 60 are encoded from `history` (the target event is already removed). Do not start from the 2026-10-17 `tiger_inference_flat` pickles.
+2. Score with `--ranking-source leak_safe_history` (the script does this).
 3. Use `per_request.jsonl` field `delta_ndcg@20` as the oracle label on validation rows: fit on user split A, choose the threshold on user split B, leave test events out. Shared user ids are allowed.
 4. Only then run the stop-gate. A gain on the old `tiger_inference_flat` rankings is not a benefit-aware result.
