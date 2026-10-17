@@ -1,0 +1,78 @@
+{
+  "source": "SeetaCloud",
+  "source_date": "2026-10-17",
+  "timezone": "Asia/Shanghai",
+  "all_done": "2026-10-17T12:09:00+08:00",
+  "gpu_rerun_by_this_commit": false,
+  "project": {
+    "name": "Budget-SID",
+    "summary": "Budget allocation plus a light SID generative-recall experiment on Amazon Beauty.",
+    "summary_zh": "预算分配，加上一条轻量的 Semantic ID 生成式召回实验。不把 TIGER 论文的模型创新算作本仓库的贡献。",
+    "public_repo": "https://github.com/JOrangsepha/Budget-SID"
+  },
+  "grid": {
+    "repo": "https://github.com/snap-research/GRID",
+    "commit": "2fe3475b2d369580234093f35d52b1a2f54d0472",
+    "vendored": false
+  },
+  "dataset": {
+    "name": "Amazon Beauty",
+    "layout": "data/amazon_data/beauty/{training,evaluation,testing,items}",
+    "in_git": false
+  },
+  "text_encoder": {
+    "name": "sentence-transformers/all-MiniLM-L6-v2",
+    "embedding_dim": 384,
+    "frozen": true,
+    "flan_t5_xl": false
+  },
+  "stages": [
+    {
+      "name": "MiniLM",
+      "status": "done",
+      "detail": "Frozen 384-d item vectors. FLAN-T5-XL was not used."
+    },
+    {
+      "name": "RQ-KMeans",
+      "status": "done",
+      "detail": "3 codebooks, width 256."
+    },
+    {
+      "name": "SID",
+      "status": "done",
+      "detail": "RQ-KMeans codes plus the TIGER dedup digit. Generator num_hierarchies=4."
+    },
+    {
+      "name": "tiger_train_flat",
+      "status": "done",
+      "detail": "Early stop. Best checkpoint checkpoint_epoch=000_step=018800.ckpt. Best val/recall@5 ≈ 0.059."
+    },
+    {
+      "name": "fixed-beam infer",
+      "status": "done",
+      "detail": "top_k 20/40/60 all exit 0, about 22363 rows each. Finished 12:06 / 12:07 / 12:09 Asia/Shanghai."
+    },
+    {
+      "name": "benefit-aware stop-gate",
+      "status": "not_wired",
+      "detail": "Request-level benefit-aware ΔNDCG@20 budget stop-gate is not connected to GRID tiger_inference outputs. Fixed-beam only."
+    }
+  ],
+  "results_file": "artifacts/BEAUTY_GPU_RESULTS.json",
+  "checkpoint_in_git": false,
+  "checkpoint_path_relative_to_third_party_GRID": "logs/train/runs/2026-10-17/00-35-10/checkpoints/checkpoint_epoch=000_step=018800.ckpt",
+  "instance": {
+    "host": "SeetaCloud RTX 4090",
+    "left_on": true,
+    "auto_shutdown": false,
+    "skip_shutdown": true,
+    "note": "Josepha asked for no auto-shutdown after finish. Scripts log SKIP_SHUTDOWN and do not power the machine off."
+  },
+  "still_open": [
+    "Wire request-level ΔNDCG@20 benefit prediction to GRID tiger_inference outputs",
+    "Fit the benefit model on validation users A and choose the threshold on disjoint users B (average beam ≤ 40)",
+    "Run the validation stop-gate (exit 2 means the premise failed)",
+    "Compare fixed 20/40/60, random, entropy, and benefit-aware routing on one checkpoint",
+    "Report Recall@20, NDCG@20, latency, throughput, peak VRAM, long-tail and short-history slices over seeds 42, 43, 44"
+  ]
+}

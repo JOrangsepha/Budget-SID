@@ -25,9 +25,11 @@ from budget_sid.synthetic import CATALOG, make_population
 
 GPU_PLAN_MESSAGE = (
     "GPU path is not executed in this environment. "
-    "Pin GRID with scripts/pin_grid.sh, cache frozen MiniLM embeddings, "
-    "then run the returned GRID commands on one device. "
-    "TODO(gpu): SeetaCloud RTX 4090."
+    "Fixed-beam Beauty inference already finished on SeetaCloud on 2026-10-17; "
+    "see artifacts/BEAUTY_GPU_RESULTS.json. "
+    "Request-level benefit-aware routing is not wired to those GRID outputs. "
+    "On one GPU, run scripts/run_beauty_gpu.sh or scripts/run_after_tiger.sh. "
+    "This process only prints the command plan."
 )
 
 
