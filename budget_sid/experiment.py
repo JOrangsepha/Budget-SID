@@ -172,33 +172,45 @@ def _score_policy(policy, test_rows: list[dict]) -> dict:
     return summary
 
 
-def command_evaluate_budgets(config: dict, smoke: bool) -> dict:
+def command_evaluate_budgets(config: dict, smoke: bool, *, records=None, load_test=None) -> dict:
+    """Score fixed and routed beams on the test split only after the stop-gate passes.
+
+    ``load_test`` is the only test-set read on this path. It is not called
+    when the gate returns exit code 2. ``records`` replaces the scripted
+    population for tests; the CLI leaves it unset.
+    """
     if not smoke:
         plan = _gpu_plan("evaluate_budgets", config)
         plan["sampled_negatives"] = False
         return plan
-    rows, trained, entropy_threshold = _fit_smoke(config)
-    val_rows = [row for row in rows if row["split"] == "val"]
-    test_rows = [row for row in rows if row["split"] == "test"]
+    if records is None:
+        rows, trained, entropy_threshold = _fit_smoke(config)
+    else:
+        rows = list(records)
+        trained = train_on_split_a(rows, seed=int(config["train"]["seed"]))
+        test_ids = [row["user_id"] for row in rows if row.get("split") == "test"]
+        assert_test_unused(trained.split_a | trained.split_b, test_ids)
+        val_rows_b = [
+            row for row in rows if row.get("split") == "val" and str(row["user_id"]) in trained.split_b
+        ]
+        entropy_threshold = select_threshold(
+            np.array([row["features"]["first_step_entropy"] for row in val_rows_b], dtype=np.float64)
+        )
+    val_rows = [row for row in rows if row.get("split", "val") == "val"]
     gate = run_stop_gate(
         val_rows,
         top_fraction=float(config["stop_gate"]["top_fraction"]),
         min_positive_mass=float(config["stop_gate"]["min_positive_mass"]),
     )
-    policies = build_policies(
-        predictor=trained.predictor,
-        threshold=trained.threshold,
-        entropy_threshold=entropy_threshold,
-        seed=int(config["train"]["seed"]),
-    )
-    return {
+    payload = {
         "command": "evaluate_budgets",
         "ok": gate.ok,
         "exit_code": gate.exit_code,
-        "status": "scripted",
+        "status": "scripted" if gate.ok else "stopped",
         "scripted": True,
         "sampled_negatives": False,
         "test_locked": True,
+        "test_scored": False,
         "stop_gate": {
             "exit_code": gate.exit_code,
             "concentrated_gain": gate.concentrated_gain,
@@ -208,8 +220,22 @@ def command_evaluate_budgets(config: dict, smoke: bool) -> dict:
             "reference_ndcg": gate.reference_ndcg,
             "reasons": gate.reasons,
         },
-        "test_metrics": {name: _score_policy(policy, test_rows) for name, policy in policies.items()},
     }
+    def default_load_test():
+        return [row for row in rows if row.get("split") == "test"]
+
+    if not gate.ok:
+        return payload
+    test_rows = list((load_test or default_load_test)())
+    policies = build_policies(
+        predictor=trained.predictor,
+        threshold=trained.threshold,
+        entropy_threshold=entropy_threshold,
+        seed=int(config["train"]["seed"]),
+    )
+    payload["test_scored"] = True
+    payload["test_metrics"] = {name: _score_policy(policy, test_rows) for name, policy in policies.items()}
+    return payload
 
 
 def parse_history(text: str) -> list:

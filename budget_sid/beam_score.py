@@ -402,8 +402,9 @@ def summarize_beam_scores(per_request, *, ranking_source: str, n_unknown_codes: 
             "max": float(max(deltas)) if deltas else None,
         },
         "p1_next_step": (
-            "Join per_request.jsonl on request_id. Fit the benefit model on val rows using "
-            "delta_ndcg@20 only when auditable_for_delta_ndcg is true. Keep test events out."
+            "Run python -m budget_sid analyze_benefit on per_request.jsonl before fitting a "
+            "benefit model. Use delta_ndcg@20 only when auditable_for_delta_ndcg is true. "
+            "Keep test events out."
         ),
     }
 

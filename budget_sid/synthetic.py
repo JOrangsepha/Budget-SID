@@ -94,6 +94,31 @@ def uniform_gain_population(n_users: int = 24, delta: float = 0.1):
     return rows
 
 
+def selective_oracle_counterexample():
+    """Ten validation requests: two gain from beam 60, eight are hurt by it.
+
+    Mean ΔNDCG@20 is −0.6. Filling the beam-40 budget (five large beams)
+    upgrades hurt requests and scores 0.7, which loses to uniform beam 40
+    (0.8). Upgrading only the two positive requests scores 1.0 at mean beam
+    28, which is inside the budget and beats both.
+    """
+    rows = []
+    for index in range(2):
+        rows.append(_beam_row(f"gain-{index:02d}", {20: 0.0, 40: 0.0, 60: 1.0}))
+    for index in range(8):
+        rows.append(_beam_row(f"hurt-{index:02d}", {20: 1.0, 40: 1.0, 60: 0.0}))
+    return rows
+
+
+def _beam_row(user_id: str, ndcg: dict):
+    return {
+        "user_id": user_id,
+        "split": "val",
+        "ndcg_by_beam": {int(beam): float(value) for beam, value in ndcg.items()},
+        "delta_ndcg": float(ndcg[60] - ndcg[20]),
+    }
+
+
 def oracle_tied_population(n_easy: int = 20, n_hard: int = 4):
     """Wide-beam gain exists, but beam 40 already captured it, so the oracle ties."""
     rows = []

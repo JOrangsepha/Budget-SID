@@ -1,0 +1,21 @@
+{
+  "source": "SeetaCloud",
+  "source_date": "2026-10-17",
+  "gpu_rerun_by_this_commit": false,
+  "note": "Aggregates transcribed from outputs/leak_safe_beams/summary.json. per_request.jsonl is not in git (outputs/ is ignored). This commit did not re-run the beams and does not add metrics beyond those aggregates.",
+  "ranking_source": "leak_safe_history",
+  "auditable_for_delta_ndcg": true,
+  "benefit_aware_claimed": false,
+  "n_requests": 67089,
+  "beams": {
+    "20": {"ndcg@20": 0.06356, "recall@20": 0.1388, "recall@20_approximate": true},
+    "40": {"ndcg@20": 0.06425, "recall@20": 0.1416, "recall@20_approximate": true},
+    "60": {"ndcg@20": 0.06418, "recall@20": 0.1414, "recall@20_approximate": true}
+  },
+  "delta_ndcg@20": {
+    "n": 67089,
+    "mean": 0.000618,
+    "min": -0.369,
+    "max": 1.0
+  }
+}

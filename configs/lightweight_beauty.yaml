@@ -86,7 +86,8 @@ stop_gate:
   top_fraction: 0.2
   min_positive_mass: 0.5
   max_positive_user_fraction: 0.5
-  min_mean_delta: 0.0
+  # Mean Δ over all requests is not a stop. A near-zero or negative mean can
+  # still have a concentrated positive tail worth a selective budget.
   oracle_must_beat_reference: true
 
 grid:
