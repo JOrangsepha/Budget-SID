@@ -1,0 +1,70 @@
+{
+  "source": "SeetaCloud",
+  "source_date": "2026-10-17",
+  "timezone": "Asia/Shanghai",
+  "all_done": "2026-10-17T12:09:00+08:00",
+  "gpu_rerun_by_this_commit": false,
+  "note": "Transcribed from the finished SeetaCloud RTX 4090 run. This commit did not re-run the GPU and does not add metrics beyond that log.",
+  "host": "SeetaCloud RTX 4090",
+  "dataset": "Amazon Beauty",
+  "grid_repo": "https://github.com/snap-research/GRID",
+  "grid_commit": "2fe3475b2d369580234093f35d52b1a2f54d0472",
+  "stages": [
+    "MiniLM",
+    "RQ-KMeans",
+    "SID",
+    "tiger_train_flat",
+    "fixed-beam infer"
+  ],
+  "checkpoint": {
+    "filename": "checkpoint_epoch=000_step=018800.ckpt",
+    "path_relative_to_third_party_GRID": "logs/train/runs/2026-10-17/00-35-10/checkpoints/checkpoint_epoch=000_step=018800.ckpt",
+    "early_stop": true,
+    "best_val_recall@5": 0.059,
+    "best_val_recall@5_approximate": true,
+    "stored_in_git": false,
+    "why_not_in_git": "Checkpoint is too large to commit. It stays on the GPU machine at the path above."
+  },
+  "test": {
+    "ndcg@5": 0.0293,
+    "ndcg@10": 0.0366,
+    "recall@5": 0.0456,
+    "recall@10": 0.0682
+  },
+  "val": {
+    "ndcg@5": 0.0361,
+    "ndcg@10": 0.0453
+  },
+  "beam_inference": [
+    {
+      "top_k": 20,
+      "exit_code": 0,
+      "rows_approximate": 22363,
+      "finished_asia_shanghai": "2026-10-17T12:06:00+08:00"
+    },
+    {
+      "top_k": 40,
+      "exit_code": 0,
+      "rows_approximate": 22363,
+      "finished_asia_shanghai": "2026-10-17T12:07:00+08:00"
+    },
+    {
+      "top_k": 60,
+      "exit_code": 0,
+      "rows_approximate": 22363,
+      "finished_asia_shanghai": "2026-10-17T12:09:00+08:00"
+    }
+  ],
+  "protocol_metrics_not_in_this_log": [
+    "recall@20",
+    "ndcg@20",
+    "latency_mean",
+    "latency_p95",
+    "throughput",
+    "peak_vram"
+  ],
+  "open_gap": "Request-level benefit-aware ΔNDCG@20 budget stop-gate is not wired to GRID tiger_inference outputs. This run is fixed-beam only.",
+  "instance_left_on": true,
+  "auto_shutdown": false,
+  "skip_shutdown": true
+}

@@ -11,6 +11,7 @@ venv/
 outputs/
 logs/
 .hydra/
+artifacts/markers/
 data/*
 !data/.gitkeep
 *.pt
