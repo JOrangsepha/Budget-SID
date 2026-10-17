@@ -17,7 +17,7 @@ GRID 不放进本仓库，只用 `scripts/pin_grid.sh` 锁在 commit `2fe3475b2d
 - Budget allocation plus a light SID generative-recall experiment on Amazon Beauty.
 - Pinned GRID commit `2fe3475b2d369580234093f35d52b1a2f54d0472`. GRID is not vendored.
 - 2026-10-17 SeetaCloud RTX 4090: fixed beams 20/40/60 finished (exit 0). Benefit-aware stop-gate is not wired.
-- P0 eval audit does not retrain and does not claim a benefit-aware gain. It exports leak-safe history/target samples and can score NDCG@5, NDCG@10, and NDCG@20 per request. See `docs/P0_EVAL_AUDIT.md`. The 2026-10-17 `tiger_inference_flat` rankings keep the target event in the encoder input, so they are not leak-safe ΔNDCG. The logged test nDCG@5 and nDCG@10 came from `NextKTokenMasking` and are not that leak.
+- P0 eval audit does not retrain and does not claim a benefit-aware gain. It exports leak-safe history/target samples and can score NDCG@5, NDCG@10, and NDCG@20 per request. See `docs/P0_EVAL_AUDIT.md`. The 2026-10-17 `tiger_inference_flat` rankings keep the target event in the encoder input, so they are not leak-safe ΔNDCG. Re-run beams with `scripts/run_leak_safe_beams.sh` on the exported history. The logged test nDCG@5 and nDCG@10 came from `NextKTokenMasking` and are not that leak.
 - Checkpoint stays on the GPU machine. It is not in git.
 - Scripts log `SKIP_SHUTDOWN` and do not power the instance off.
 
@@ -172,7 +172,13 @@ SeetaCloud 上对已有 Beauty 文件（不在 git 里）：
 SID_PATH=/path/to/semantic_ids.pt bash scripts/p0_eval_audit.sh
 ```
 
-字段、审计结论和 P1 怎么接这些文件，写在 `docs/P0_EVAL_AUDIT.md`。
+P0 导出之后，用历史（不含目标事件）重跑固定 beam 20/40/60，再按 `leak_safe_history` 打分。不要把 2026-10-17 的 `tiger_inference_flat` pickle 拿来算 ΔNDCG。
+
+```bash
+SID_PATH=/path/to/semantic_ids.pt bash scripts/run_leak_safe_beams.sh
+```
+
+字段、审计结论、截断窗口，以及上面这条命令，写在 `docs/P0_EVAL_AUDIT.md`。
 
 ## TODO
 

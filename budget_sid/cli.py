@@ -10,6 +10,7 @@ from budget_sid.beam_score import command_score_beam_ndcg
 from budget_sid.config import default_config_path, load_config
 from budget_sid.eval_audit import command_audit_eval_leakage
 from budget_sid.eval_samples import command_export_eval_samples
+from budget_sid.leak_safe_predict import command_build_leak_safe_predict, command_export_leak_safe_rankings
 from budget_sid.experiment import (
     command_build_semantic_ids,
     command_demo,
@@ -28,6 +29,8 @@ COMMANDS = (
     "export_eval_samples",
     "audit_eval_leakage",
     "score_beam_ndcg",
+    "build_leak_safe_predict",
+    "export_leak_safe_rankings",
 )
 
 
@@ -54,7 +57,13 @@ def build_parser() -> argparse.ArgumentParser:
                 default="",
                 help="comma-separated history item ids; default is a short scripted history",
             )
-        if name in {"export_eval_samples", "audit_eval_leakage", "score_beam_ndcg"}:
+        if name in {
+            "export_eval_samples",
+            "audit_eval_leakage",
+            "score_beam_ndcg",
+            "build_leak_safe_predict",
+            "export_leak_safe_rankings",
+        }:
             command.add_argument(
                 "--dry-run",
                 action="store_true",
@@ -89,6 +98,18 @@ def build_parser() -> argparse.ArgumentParser:
                 help="grid_tiger_inference_flat rankings are scored but not treated as leak-safe ΔNDCG",
             )
             command.add_argument("--sid-map", default=None, help="JSON/JSONL/pt map from semantic id to item id")
+        if name == "build_leak_safe_predict":
+            command.add_argument("--samples", default=None, help="eval_samples.jsonl with history and target removed from the model input")
+            command.add_argument("--output-dir", default=None, help="folder of history-only TFRecords for tiger_inference_flat")
+            command.add_argument("--semantic-id-path", default=None, help="optional SID map; history item ids must occur in it")
+            command.add_argument("--sequence-length", type=int, default=120)
+            command.add_argument("--num-hierarchies", type=int, default=4)
+        if name == "export_leak_safe_rankings":
+            command.add_argument("--predictions", default=None, help="GRID merged_predictions.pkl (user_id is predict_key)")
+            command.add_argument("--index", default=None, help="predict_index.jsonl from build_leak_safe_predict")
+            command.add_argument("--sid-map", default=None, help="JSON/JSONL/pt map from semantic id to item id")
+            command.add_argument("--beam", type=int, default=None)
+            command.add_argument("--output", default=None, help="beam_<k>.jsonl with request_id and ranked_items")
     return parser
 
 
@@ -122,6 +143,26 @@ def main(argv: list[str] | None = None) -> int:
         payload = command_audit_eval_leakage(
             smoke=smoke,
             samples=args.samples,
+            output=args.output,
+            dry_run=args.dry_run,
+        )
+    elif args.command == "build_leak_safe_predict":
+        payload = command_build_leak_safe_predict(
+            smoke=smoke,
+            samples=args.samples,
+            output_dir=args.output_dir,
+            semantic_id_path=args.semantic_id_path,
+            sequence_length=args.sequence_length,
+            num_hierarchies=args.num_hierarchies,
+            dry_run=args.dry_run,
+        )
+    elif args.command == "export_leak_safe_rankings":
+        payload = command_export_leak_safe_rankings(
+            smoke=smoke,
+            predictions=args.predictions,
+            index=args.index,
+            sid_map=args.sid_map,
+            beam=args.beam,
             output=args.output,
             dry_run=args.dry_run,
         )

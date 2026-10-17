@@ -33,40 +33,82 @@ def _sequence(sample: dict) -> list:
     return list(sample["history"]) + [sample["target"]]
 
 
+def _loo_relation(predecessor: list, successor: list) -> str:
+    """Exact leave-one-out, or the same pair after a one-item tail window.
+
+    A max-length store keeps the tail of each split. Once both stored
+    sequences hit that cap, the predecessor's oldest item is the one the
+    successor dropped, and the successor's newest item is the target event:
+    ``predecessor[1:] == successor[:-1]``. Length-1 pairs are not treated as
+    a window, because the overlap would be empty.
+    """
+    if not successor:
+        return "mismatch"
+    if list(predecessor) == list(successor)[:-1]:
+        return "exact"
+    if (
+        len(predecessor) == len(successor)
+        and len(successor) >= 2
+        and list(predecessor)[1:] == list(successor)[:-1]
+    ):
+        return "truncation"
+    return "mismatch"
+
+
+def _user_prefix_relation(train, val, test) -> str:
+    if train is None or val is None or test is None:
+        return "mismatch"
+    left = _loo_relation(_sequence(train), _sequence(val))
+    right = _loo_relation(_sequence(val), _sequence(test))
+    if left == "mismatch" or right == "mismatch":
+        return "mismatch"
+    if left == "exact" and right == "exact":
+        return "exact"
+    return "truncation"
+
+
 def _prefix_report(samples) -> dict:
     by_user: dict[str, dict[str, list]] = {}
     for sample in samples:
         by_user.setdefault(str(sample["user_id"]), {}).setdefault(sample["split"], []).append(sample)
     n_all = 0
-    n_ok = 0
+    n_exact = 0
+    n_truncation = 0
     n_mismatch = 0
     mismatch_user_ids: list[str] = []
+    truncation_user_ids: list[str] = []
     for user_id, splits in sorted(by_user.items()):
         if not all(name in splits for name in ("train", "val", "test")):
             continue
         n_all += 1
-        train = _single_row(splits["train"])
-        val = _single_row(splits["val"])
-        test = _single_row(splits["test"])
-        ok = (
-            train is not None
-            and val is not None
-            and test is not None
-            and _sequence(val) == _sequence(test)[:-1]
-            and _sequence(train) == _sequence(val)[:-1]
+        relation = _user_prefix_relation(
+            _single_row(splits["train"]),
+            _single_row(splits["val"]),
+            _single_row(splits["test"]),
         )
-        if ok:
-            n_ok += 1
+        if relation == "exact":
+            n_exact += 1
+        elif relation == "truncation":
+            n_truncation += 1
+            if len(truncation_user_ids) < 8:
+                truncation_user_ids.append(user_id)
         else:
             n_mismatch += 1
             if len(mismatch_user_ids) < 8:
                 mismatch_user_ids.append(user_id)
     return {
         "n_users_with_all_splits": n_all,
-        "n_prefix_consistent": n_ok,
+        "n_prefix_consistent": n_exact,
+        "n_prefix_exact": n_exact,
+        "n_prefix_truncation_consistent": n_truncation,
         "n_prefix_mismatch": n_mismatch,
         "mismatch_user_ids": mismatch_user_ids,
-        "rule": "val sequence == test sequence without its last event, and train sequence == val sequence without its last event",
+        "truncation_user_ids": truncation_user_ids,
+        "rule": (
+            "val sequence == test sequence without its last event, and train sequence == "
+            "val sequence without its last event. A one-item tail window "
+            "(predecessor[1:] == successor[:-1], same length) is truncation, not leakage."
+        ),
     }
 
 
@@ -115,15 +157,27 @@ def audit_samples(samples) -> dict:
     prefixes = _prefix_report(samples)
     users = describe_split_users(samples)
     collate = _collate_report(samples)
+    protocol_exact = (
+        prefixes["n_users_with_all_splits"] > 0 and prefixes["n_prefix_exact"] == prefixes["n_users_with_all_splits"]
+    )
     protocol_verified = prefixes["n_users_with_all_splits"] > 0 and prefixes["n_prefix_mismatch"] == 0
     if protocol_verified:
         collate["stored_sequences_include_target_event"] = True
         rankings_leak_safe = False
-        rankings_reason = (
-            "Cross-split prefixes match leave-one-out, so each stored sequence ends with its "
-            "target event. collate_fn_inference_for_sequence keeps that event. "
-            "Beam rankings from tiger_inference_flat are not leak-safe ΔNDCG inputs."
-        )
+        if protocol_exact:
+            rankings_reason = (
+                "Cross-split prefixes match leave-one-out, so each stored sequence ends with its "
+                "target event. collate_fn_inference_for_sequence keeps that event. "
+                "Beam rankings from tiger_inference_flat are not leak-safe ΔNDCG inputs."
+            )
+        else:
+            rankings_reason = (
+                "Stored sequences match leave-one-out after a one-item tail window "
+                "(max-length truncation). Each stored sequence still ends with its target event. "
+                "collate_fn_inference_for_sequence keeps that event. "
+                "The 2026-10-17 tiger_inference_flat beams are not leak-safe ΔNDCG inputs. "
+                "The exported history is the strict prefix and does not include that event."
+            )
     else:
         rankings_leak_safe = False
         rankings_reason = (
@@ -134,8 +188,11 @@ def audit_samples(samples) -> dict:
     if failures or prefixes["n_prefix_mismatch"]:
         status = "fail"
         ok = False
-    elif protocol_verified:
+    elif protocol_exact:
         status = "verified"
+        ok = True
+    elif protocol_verified:
+        status = "verified_with_truncation"
         ok = True
     else:
         status = "event_checks_passed_protocol_unverified"
@@ -144,7 +201,13 @@ def audit_samples(samples) -> dict:
     return {
         "protocol": "temporal_leave_one_out",
         "protocol_summary": PROTOCOL_SUMMARY,
+        "protocol_exact": protocol_exact,
         "protocol_verified": protocol_verified,
+        "protocol_note": (
+            "protocol_exact is the strict prefix check. protocol_verified is also true when "
+            "every all-split user is exact or a one-item tail window. Truncation does not put "
+            "the target event back into history. n_target_event_in_history is the leakage count."
+        ),
         "status": status,
         "ok": ok,
         "n_samples": len(samples),
@@ -205,6 +268,8 @@ def command_audit_eval_leakage(
             "scripted": bool(smoke),
             "dry_run": bool(dry_run),
             "protocol_verified": report["protocol_verified"],
+            "protocol_exact": report["protocol_exact"],
+            "n_prefix_truncation_consistent": report["prefixes"]["n_prefix_truncation_consistent"],
             "n_samples": report["n_samples"],
             "n_checked": report["n_checked"],
             "n_target_event_in_history": report["n_target_event_in_history"],

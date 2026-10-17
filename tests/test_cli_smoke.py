@@ -15,6 +15,8 @@ COMMANDS = [
     "export_eval_samples",
     "audit_eval_leakage",
     "score_beam_ndcg",
+    "build_leak_safe_predict",
+    "export_leak_safe_rankings",
 ]
 
 

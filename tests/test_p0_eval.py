@@ -164,6 +164,7 @@ def test_synthetic_audit_verifies_prefixes_and_does_not_call_train_metrics_leake
     report = audit_samples(synthetic_samples())
     assert report["ok"] is True
     assert report["protocol_verified"] is True
+    assert report["protocol_exact"] is True
     assert report["n_target_event_in_history"] == 0
     assert report["n_repeated_target_item"] == 1
     assert report["users"]["n_shared_val_test"] == 1

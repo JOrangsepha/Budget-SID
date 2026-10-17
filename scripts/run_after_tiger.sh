@@ -3,7 +3,8 @@
 #
 # P0: collate_fn_inference_for_sequence keeps the last event. Rankings from
 # this script are not leak-safe ΔNDCG inputs. Export history with
-# scripts/p0_eval_audit.sh before scoring. See docs/P0_EVAL_AUDIT.md.
+# scripts/p0_eval_audit.sh, then run scripts/run_leak_safe_beams.sh.
+# See docs/P0_EVAL_AUDIT.md. Do not score the 2026-10-17 pickles as ΔNDCG.
 #
 # The 2026-10-17 SeetaCloud Beauty run already finished (top_k 20/40/60,
 # exit 0). This script records that invocation. It does not power the
