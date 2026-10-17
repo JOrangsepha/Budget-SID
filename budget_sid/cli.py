@@ -6,6 +6,7 @@ import argparse
 import json
 import sys
 
+from budget_sid.analyze_benefit import command_analyze_benefit
 from budget_sid.beam_score import command_score_beam_ndcg
 from budget_sid.config import default_config_path, load_config
 from budget_sid.eval_audit import command_audit_eval_leakage
@@ -31,6 +32,7 @@ COMMANDS = (
     "score_beam_ndcg",
     "build_leak_safe_predict",
     "export_leak_safe_rankings",
+    "analyze_benefit",
 )
 
 
@@ -110,6 +112,18 @@ def build_parser() -> argparse.ArgumentParser:
             command.add_argument("--sid-map", default=None, help="JSON/JSONL/pt map from semantic id to item id")
             command.add_argument("--beam", type=int, default=None)
             command.add_argument("--output", default=None, help="beam_<k>.jsonl with request_id and ranked_items")
+        if name == "analyze_benefit":
+            command.add_argument(
+                "--per-request",
+                default=None,
+                help="per_request.jsonl from score_beam_ndcg (delta_ndcg@20 and beams.20/40/60.ndcg@20)",
+            )
+            command.add_argument(
+                "--summary",
+                default=None,
+                help="summary.json; required to confirm auditable_for_delta_ndcg before P2",
+            )
+            command.add_argument("--output", default=None, help="optional JSON report path")
     return parser
 
 
@@ -165,6 +179,13 @@ def main(argv: list[str] | None = None) -> int:
             beam=args.beam,
             output=args.output,
             dry_run=args.dry_run,
+        )
+    elif args.command == "analyze_benefit":
+        payload = command_analyze_benefit(
+            per_request=args.per_request,
+            summary=args.summary,
+            smoke=smoke,
+            output=args.output,
         )
     elif args.command == "score_beam_ndcg":
         payload = command_score_beam_ndcg(

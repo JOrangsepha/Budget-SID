@@ -16,7 +16,8 @@ GRID 不放进本仓库，只用 `scripts/pin_grid.sh` 锁在 commit `2fe3475b2d
 
 - Budget allocation plus a light SID generative-recall experiment on Amazon Beauty.
 - Pinned GRID commit `2fe3475b2d369580234093f35d52b1a2f54d0472`. GRID is not vendored.
-- 2026-10-17 SeetaCloud RTX 4090: fixed beams 20/40/60 finished (exit 0). Benefit-aware stop-gate is not wired.
+- 2026-10-17 SeetaCloud RTX 4090: fixed beams 20/40/60 finished (exit 0). Benefit-aware stop-gate is not wired to those GRID outputs.
+- P1 reads leak-safe `per_request.jsonl` when that file is present. The transcribed SeetaCloud summary does not clear P2. See `docs/P1_BENEFIT_ANALYSIS.md`. No benefit-aware online gain is claimed.
 - P0 eval audit does not retrain and does not claim a benefit-aware gain. It exports leak-safe history/target samples and can score NDCG@5, NDCG@10, and NDCG@20 per request. See `docs/P0_EVAL_AUDIT.md`. The 2026-10-17 `tiger_inference_flat` rankings keep the target event in the encoder input, so they are not leak-safe ΔNDCG. Re-run beams with `scripts/run_leak_safe_beams.sh` on the exported history. The logged test nDCG@5 and nDCG@10 came from `NextKTokenMasking` and are not that leak.
 - Checkpoint stays on the GPU machine. It is not in git.
 - Scripts log `SKIP_SHUTDOWN` and do not power the instance off.
@@ -179,6 +180,18 @@ SID_PATH=/path/to/semantic_ids.pt bash scripts/run_leak_safe_beams.sh
 ```
 
 字段、审计结论、截断窗口，以及上面这条命令，写在 `docs/P0_EVAL_AUDIT.md`。
+
+## P1 止损
+
+泄漏安全汇总（`outputs/leak_safe_beams/summary.json`，n=67089）里，beam 60 的 nDCG@20 是 0.06418，beam 40 是 0.06425，平均 ΔnDCG@20（60−20）是 0.000618。这个均值没有证明正尾够集中，P2 先不要做。逐条标签不在 git 里。机器上有 `per_request.jsonl` 时再跑：
+
+```bash
+python -m budget_sid analyze_benefit \
+  --per-request outputs/leak_safe_beams/per_request.jsonl \
+  --summary outputs/leak_safe_beams/summary.json
+```
+
+`p2_worth_doing` 为 true 之前不要拟合 Ridge，也不要声称线上收益。GridRecommender 没有开始。说明在 `docs/P1_BENEFIT_ANALYSIS.md`。
 
 ## TODO
 
