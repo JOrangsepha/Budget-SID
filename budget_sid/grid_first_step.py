@@ -18,6 +18,12 @@ computed before the beam is expanded, so one dump serves beams 20, 40, and 60.
 If ``should_check_prefix`` is set, the same first-step mask ``generate`` applies
 before its softmax is applied here, still before ``extract_features`` softmaxes.
 Invalid codes become ``-inf``. They are not replaced with zeros.
+
+``SequenceDataModule.setup`` reads ``self.trainer``. This dump does not call
+``Trainer.predict`` (that path keeps semantic ids and drops the logits), so a
+Trainer is attached to the module and the datamodule before ``setup``.
+``predict_dataloader`` returns a 1-tuple; Lightning unpacks it, and this dump
+does the same before iterating batches.
 """
 
 from __future__ import annotations
@@ -401,6 +407,94 @@ def run_grid_first_step_dump(
         os.chdir(previous)
 
 
+def attach_lightning_trainer(module, trainer) -> None:
+    """Set ``module.trainer`` the way Lightning does before ``setup``.
+
+    Pinned GRID ``SequenceDataModule.setup`` raises when ``self.trainer`` is
+    missing. It reads ``world_size`` and ``global_rank`` to assign TFRecord
+    files. ``Trainer.predict`` is what normally sets the attribute. This dump
+    does not call ``predict``, because that hook drops the logits.
+    """
+    if module is None or trainer is None:
+        raise MissingFirstStepLogits(
+            "GRID setup requires a Lightning Trainer on self.trainer. "
+            "Refusing to invent logits."
+        )
+    try:
+        module.trainer = trainer
+    except Exception as exc:
+        raise MissingFirstStepLogits(
+            "Could not attach a Lightning Trainer before datamodule.setup. "
+            "GRID reads self.trainer. Refusing to invent logits. " + str(exc)
+        ) from exc
+    if getattr(module, "trainer", None) is None:
+        raise MissingFirstStepLogits(
+            "self.trainer is still unset after attach. "
+            "GRID SequenceDataModule.setup will not assign predict files. "
+            "Refusing to invent logits."
+        )
+
+
+def unwrap_predict_dataloader(loader):
+    """Return the single loader inside GRID's 1-tuple.
+
+    ``SequenceDataModule.get_dataloader`` returns ``(loader,)``. Lightning
+    unpacks that before iteration. Iterating the tuple yields the loader
+    itself, so the batch has no ``user_id_list`` and the join is wrong.
+    """
+    if loader is None:
+        raise MissingFirstStepLogits(
+            "predict_dataloader returned nothing. Refusing to invent logits."
+        )
+    if isinstance(loader, tuple):
+        if len(loader) != 1 or loader[0] is None:
+            raise MissingFirstStepLogits(
+                f"predict_dataloader returned a {len(loader)}-tuple. "
+                "Pinned GRID returns one loader. Refusing to iterate that tuple as batches."
+            )
+        return loader[0]
+    return loader
+
+
+def bind_trainer_and_predict_loader(module, datamodule, trainer):
+    """Attach ``trainer``, then ``setup('predict')``, then unwrap the loader.
+
+    Attachment happens before ``datamodule.setup``. GRID reads
+    ``datamodule.trainer`` inside that hook. The module is attached first,
+    matching Lightning's ``Trainer.predict`` order without calling ``predict``.
+    """
+    attach_lightning_trainer(module, trainer)
+    attach_lightning_trainer(datamodule, trainer)
+    if hasattr(datamodule, "setup"):
+        datamodule.setup(stage="predict")
+    if not hasattr(datamodule, "predict_dataloader"):
+        raise MissingFirstStepLogits(
+            "datamodule has no predict_dataloader(). Refusing to invent logits."
+        )
+    return unwrap_predict_dataloader(datamodule.predict_dataloader())
+
+
+def _make_predict_trainer():
+    """One-GPU Trainer. ``setup`` only needs ``world_size`` and ``global_rank``."""
+    try:
+        from lightning.pytorch import Trainer
+    except ImportError as exc:
+        raise MissingFirstStepLogits(
+            "lightning is not importable. GRID SequenceDataModule.setup reads self.trainer. "
+            "Refusing to invent logits. " + str(exc)
+        ) from exc
+    return Trainer(
+        accelerator="gpu",
+        devices=1,
+        num_nodes=1,
+        strategy="auto",
+        logger=False,
+        enable_checkpointing=False,
+        enable_progress_bar=False,
+        enable_model_summary=False,
+    )
+
+
 def _run_loaded_dump(*, root: Path, data_dir: str, sid_path: str, ckpt: str, predict_dir: str, index_rows):
     try:
         import torch
@@ -436,9 +530,7 @@ def _run_loaded_dump(*, root: Path, data_dir: str, sid_path: str, ckpt: str, pre
     datamodule = hydra.utils.instantiate(cfg.data_loading.datamodule)
     model = hydra.utils.instantiate(cfg.model)
     _load_state_dict(model, ckpt)
-    if hasattr(datamodule, "setup"):
-        datamodule.setup(stage="predict")
-    loader = datamodule.predict_dataloader()
+    loader = bind_trainer_and_predict_loader(model, datamodule, _make_predict_trainer())
     device = torch.device("cuda")
     model = model.to(device)
     model.eval()

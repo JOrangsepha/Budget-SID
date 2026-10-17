@@ -105,6 +105,8 @@ Alignment with `outputs/leak_safe_beams/per_request.jsonl`:
 
 Pinned GRID `SemanticIDEncoderDecoder.generate` (commit `2fe3475`) computes hierarchy-0 `candidate_logits` with `encoder_forward_pass`, `decoder_forward_pass(future_ids=None)`, and `decoder.decoder_mlp[0]`, then drops them inside `_beam_search_one_step`. `predict_step` returns semantic ids only, so the beam pickles have no logits. The dump calls those same three methods and keeps the matrix. It does not run hierarchies 1..3, so `top_k` does not change the file: one dump covers beams 20, 40, and 60. The pin stays `2fe3475`. The checkout is not edited.
 
+`SequenceDataModule.setup` reads `self.trainer`. The dump attaches a Lightning Trainer to the module and the datamodule before that call, and leaves `Trainer.predict` unused because `predict_step` drops the logits. `predict_dataloader` returns a 1-tuple; the dump unwraps it before iterating batches. Iterating the tuple yields the loader, so the batch loop never sees `user_id_list`.
+
 If the logit tensor, the MLP, the checkpoint `state_dict`, or `user_id_list` is missing, the process exits non-zero and does not write a zero-filled file. A partial `load_state_dict` is refused, because a randomly initialized `decoder_mlp` would look like real logits.
 
 P3 stays gated until benefit-aware routing beats random and entropy on positive-Δ mass and nDCG@20 under the same quota. This dump does not start P3, does not time decoding, and does not claim an online win.
