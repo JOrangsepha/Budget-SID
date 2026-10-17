@@ -1,8 +1,12 @@
 # P1 benefit analysis
 
+## Update
+
+The aggregates in this document still do not clear P2. A later SeetaCloud pass on the validation rows of `per_request.jsonl` did: `p2_worth_doing=true` (n=22363, positive Δ 0.926%, oracle nDCG@20 0.05911 > uniform beam 40 0.05750, mean beam about 20.37; uniform beam 60 does not beat beam 40). Those rows are not in git. The offline replay of that decision is `docs/P2_OFFLINE_REPLAY.md`. It is allocation quality, not a latency or online benefit-aware claim.
+
 ## Decision
 
-**Do not start P2 yet.** The leak-safe Beauty summary does not show that a concentrated positive tail is large enough to continue.
+**The summary means do not clear P2.** The leak-safe Beauty summary does not show that a concentrated positive tail is large enough to continue.
 
 Uniform beam 60 loses to uniform beam 40. Mean ΔnDCG@20 (beam 60 − beam 20) is 0.000618, which is smaller than the nDCG@20 gap from beam 20 to beam 40 (0.06425 − 0.06356 = 0.00069). A selective oracle beats beam 40 only when the positive deltas it keeps average more than that gap. `summary.json` does not count how many requests are positive, zero, or negative, so that mass is unknown.
 

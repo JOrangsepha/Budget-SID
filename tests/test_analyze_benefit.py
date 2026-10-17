@@ -221,7 +221,7 @@ def test_cli_per_request_path(tmp_path, repo_root):
 def test_benefit_doc_uses_the_seeta_summary_and_does_not_clear_p2(repo_root):
     text = (repo_root / "docs" / "P1_BENEFIT_ANALYSIS.md").read_text(encoding="utf-8")
     for snippet in (
-        "Do not start P2 yet.",
+        "The summary means do not clear P2.",
         "67089",
         "0.06356",
         "0.06425",
@@ -238,6 +238,8 @@ def test_benefit_doc_uses_the_seeta_summary_and_does_not_clear_p2(repo_root):
         assert snippet in text
     assert "Beauty oracle beats" not in text
     assert "p2_worth_doing` from the summary alone is null" in text
+    assert "docs/P2_OFFLINE_REPLAY.md" in text
+    assert "p2_worth_doing=true" in text
 
 
 def test_delta_field_must_match_beam_scores():

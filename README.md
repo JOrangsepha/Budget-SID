@@ -17,7 +17,8 @@ GRID 不放进本仓库，只用 `scripts/pin_grid.sh` 锁在 commit `2fe3475b2d
 - Budget allocation plus a light SID generative-recall experiment on Amazon Beauty.
 - Pinned GRID commit `2fe3475b2d369580234093f35d52b1a2f54d0472`. GRID is not vendored.
 - 2026-10-17 SeetaCloud RTX 4090: fixed beams 20/40/60 finished (exit 0). Benefit-aware stop-gate is not wired to those GRID outputs.
-- P1 reads leak-safe `per_request.jsonl` when that file is present. The transcribed SeetaCloud summary does not clear P2. See `docs/P1_BENEFIT_ANALYSIS.md`. No benefit-aware online gain is claimed.
+- P1 reads leak-safe `per_request.jsonl` when that file is present. The transcribed SeetaCloud summary does not clear P2. The validation pass did (`p2_worth_doing=true`). See `docs/P1_BENEFIT_ANALYSIS.md` and `docs/P2_OFFLINE_REPLAY.md`.
+- P2 is offline allocation quality: validation users A/B, ridge on A, one shared large-beam quota on B (mean nDCG@20, mean beam, positive-Δ mass versus the oracle). It is not a latency result and not an online benefit-aware claim. `per_request.jsonl` has no first-step logits; the replay reports that gap instead of filling it.
 - P0 eval audit does not retrain and does not claim a benefit-aware gain. It exports leak-safe history/target samples and can score NDCG@5, NDCG@10, and NDCG@20 per request. See `docs/P0_EVAL_AUDIT.md`. The 2026-10-17 `tiger_inference_flat` rankings keep the target event in the encoder input, so they are not leak-safe ΔNDCG. Re-run beams with `scripts/run_leak_safe_beams.sh` on the exported history. The logged test nDCG@5 and nDCG@10 came from `NextKTokenMasking` and are not that leak.
 - Checkpoint stays on the GPU machine. It is not in git.
 - Scripts log `SKIP_SHUTDOWN` and do not power the instance off.
@@ -53,6 +54,7 @@ python -m budget_sid train_recommender --config configs/lightweight_beauty.yaml 
 python -m budget_sid build_semantic_ids --config configs/lightweight_beauty.yaml --smoke
 python -m budget_sid train_benefit_predictor --config configs/lightweight_beauty.yaml --smoke
 python -m budget_sid evaluate_budgets --config configs/lightweight_beauty.yaml --smoke
+python -m budget_sid replay_budgets --config configs/lightweight_beauty.yaml --smoke
 python -m budget_sid demo --config configs/lightweight_beauty.yaml --smoke --history 1,2,3
 ```
 
@@ -183,7 +185,7 @@ SID_PATH=/path/to/semantic_ids.pt bash scripts/run_leak_safe_beams.sh
 
 ## P1 止损
 
-泄漏安全汇总（`outputs/leak_safe_beams/summary.json`，n=67089）里，beam 60 的 nDCG@20 是 0.06418，beam 40 是 0.06425，平均 ΔnDCG@20（60−20）是 0.000618。这个均值没有证明正尾够集中，P2 先不要做。逐条标签不在 git 里。机器上有 `per_request.jsonl` 时再跑：
+泄漏安全汇总（`outputs/leak_safe_beams/summary.json`，n=67089）里，beam 60 的 nDCG@20 是 0.06418，beam 40 是 0.06425，平均 ΔnDCG@20（60−20）是 0.000618。这个均值本身不能放行 P2。逐条标签不在 git 里。SeetaCloud 上验证集的后续结果是 `p2_worth_doing=true`：n=22363，正 Δ 0.926%（207），零 97.50%，负 1.57%，oracle nDCG@20 0.05911，高于全体 beam 40 的 0.05750，平均 beam 约 20.37。全体 beam 60 不高于 beam 40。这组数是报告值，本仓库没有重算。机器上有 `per_request.jsonl` 时可以再核对：
 
 ```bash
 python -m budget_sid analyze_benefit \
@@ -191,7 +193,27 @@ python -m budget_sid analyze_benefit \
   --summary outputs/leak_safe_beams/summary.json
 ```
 
-`p2_worth_doing` 为 true 之前不要拟合 Ridge，也不要声称线上收益。GridRecommender 没有开始。说明在 `docs/P1_BENEFIT_ANALYSIS.md`。
+汇总均值不能把 `p2_worth_doing` 设成 true。GridRecommender 没有开始，这里也不声称线上收益。说明在 `docs/P1_BENEFIT_ANALYSIS.md`。
+
+## P2 离线回放
+
+P2 只回答分配质量：验证用户分成不相交的 A / B，A 上用已有的标准化 Ridge 拟合 ΔNDCG@20，B 上让随机、熵（特征里有熵才比较）、收益感知花掉**同一笔** large-beam 名额。名额等于修正后 oracle 实际升级的条数（只升级正 Δ，并且不超过平均 beam 40 的上限），不是各自抛硬币，也不是把上限塞满。
+
+B 上的指标是平均 nDCG@20、平均 beam、以及各策略抓到的正 Δ 质量相对 oracle。MSE 只是拟合诊断。选择请求时不读该请求的 Δ。测试事件不参与。
+
+`per_request.jsonl` 没有首步 logits。没有 `--features` 时，熵比较会跳过；能接上的通常只有 `target_position` 当成的历史长度。缺的 `first_step_entropy`、`candidate_prob_gap`、`top1_prob` 写在 `full_p2_blockers` 里，不补假 logits。这不是延迟，也不是线上收益感知。延迟是 P3。
+
+```bash
+python -m budget_sid replay_budgets --smoke
+python -m budget_sid replay_budgets \
+  --per-request outputs/leak_safe_beams/per_request.jsonl \
+  --summary outputs/leak_safe_beams/summary.json \
+  --user-protocol temporal_loo \
+  --seeds 42,43,44 \
+  --output-dir outputs/p2_replay
+```
+
+字段和 SeetaCloud 命令在 `docs/P2_OFFLINE_REPLAY.md`。
 
 ## TODO
 
@@ -204,6 +226,7 @@ python -m budget_sid analyze_benefit \
 - [x] 冻结 MiniLM，384 维；没有加载 FLAN-T5-XL
 - [x] RQ-KMeans（3 个 codebook）+ SID，再训练 4+4 层、`d_model=128` 的生成模型；早停，最好的 `val/recall@5` ≈ 0.059
 - [x] 固定 beam / `top_k` 20、40、60 推理，退出码都是 0
+- [x] 离线 P2：验证用户 A/B，A 上 Ridge，B 上同一 large-beam 名额比较随机、熵、收益感知。指标是平均 nDCG@20、平均 beam、正 Δ 质量相对 oracle。不是延迟。见 `docs/P2_OFFLINE_REPLAY.md`。
 
 未完成：
 

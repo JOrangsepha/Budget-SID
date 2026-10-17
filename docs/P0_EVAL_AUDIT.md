@@ -142,4 +142,4 @@ P1 should consume these files and still not start from the 2026-10-17 beam expor
 3. Use `per_request.jsonl` field `delta_ndcg@20` as the oracle label on validation rows: fit on user split A, choose the threshold on user split B, leave test events out. Shared user ids are allowed.
 4. Only then run the stop-gate. A gain on the old `tiger_inference_flat` rankings is not a benefit-aware result.
 
-The offline reading of the SeetaCloud summary is `docs/P1_BENEFIT_ANALYSIS.md`. That summary does not clear P2, and it does not claim a benefit-aware gain. On the machine that has the jsonl, run `python -m budget_sid analyze_benefit --per-request outputs/leak_safe_beams/per_request.jsonl --summary outputs/leak_safe_beams/summary.json`.
+The offline reading of the SeetaCloud summary is `docs/P1_BENEFIT_ANALYSIS.md`. That summary does not clear P2, and it does not claim a benefit-aware gain. On the machine that has the jsonl, run `python -m budget_sid analyze_benefit --per-request outputs/leak_safe_beams/per_request.jsonl --summary outputs/leak_safe_beams/summary.json`. The validation pass that set `p2_worth_doing=true` is replayed offline by `docs/P2_OFFLINE_REPLAY.md`.
