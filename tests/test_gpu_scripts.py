@@ -21,7 +21,13 @@ def _script(repo_root, name):
 
 
 def test_gpu_scripts_parse_and_keep_hydra_fixes(repo_root):
-    for name in ("run_after_tiger.sh", "run_beauty_gpu.sh", "run_leak_safe_beams.sh", "dump_first_step_features.sh"):
+    for name in (
+        "run_after_tiger.sh",
+        "run_beauty_gpu.sh",
+        "run_leak_safe_beams.sh",
+        "dump_first_step_features.sh",
+        "dump_first_step_logits.sh",
+    ):
         path = repo_root / "scripts" / name
         text = path.read_text(encoding="utf-8")
         subprocess.run(["bash", "-n", str(path)], check=True)

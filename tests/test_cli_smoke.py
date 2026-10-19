@@ -20,6 +20,8 @@ COMMANDS = [
     "analyze_benefit",
     "replay_budgets",
     "dump_first_step_features",
+    "dump_first_step_logits",
+    "extract_boundary_features",
 ]
 
 
@@ -86,6 +88,33 @@ def test_smoke_cli(command, repo_root):
             "first_step_entropy",
             "candidate_prob_gap",
             "top1_prob",
+        ]
+    if command == "dump_first_step_logits":
+        assert payload["invented_logits"] is False
+        assert payload["includes_target_event"] is False
+        assert payload["p3_started"] is False
+        assert payload["grid_pin_changed"] is False
+        assert payload["split"] == "val"
+        assert payload["raw_logits_stored"] is False
+        assert payload["n"] >= 1
+        assert payload["boundary_feature_names"] == [
+            "top20_cum_prob",
+            "prob_gap_p20_p21",
+            "prob_sum_ranks_21_60",
+        ]
+    if command == "extract_boundary_features":
+        assert payload["invented_logits"] is False
+        assert payload["targets_are_routing_features"] is False
+        assert payload["p3_started"] is False
+        assert payload["grid_pin_changed"] is False
+        assert payload["feature_names"] == [
+            "history_length",
+            "first_step_entropy",
+            "candidate_prob_gap",
+            "top1_prob",
+            "top20_cum_prob",
+            "prob_gap_p20_p21",
+            "prob_sum_ranks_21_60",
         ]
     if command == "demo":
         assert payload["policy"] == "benefit_aware"

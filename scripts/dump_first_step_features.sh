@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # Leak-safe first-step features for the P2 replay.
 #
+# This file is the four scalars (history length, entropy, gap, top1).
+# The beam-20/60 boundary cut needs the logit vector. That cache is
+# scripts/dump_first_step_logits.sh (validation by default).
+#
 # Reuses the history-only predict folder from scripts/run_leak_safe_beams.sh
 # (build_leak_safe_predict). The target event is not in that history. This
 # script does not read GRID's default testing split and does not score the

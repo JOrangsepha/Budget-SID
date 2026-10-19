@@ -39,7 +39,16 @@ from budget_sid.benefit import (
 from budget_sid.constants import LARGE_BEAM, REFERENCE_BEAM, SMALL_BEAM
 from budget_sid.errors import TestLeakError
 from budget_sid.eval_samples import canonical_split, read_jsonl, write_jsonl
-from budget_sid.features import FEATURE_NAMES, extract_features, stack_named_features
+from budget_sid.features import (
+    BOUNDARY_FEATURE_NAMES,
+    BOUNDARY_TAIL_RANK,
+    FEATURE_NAMES,
+    ROUTING_FEATURE_NAMES,
+    as_float_array,
+    extract_boundary_features,
+    extract_features,
+    stack_named_features,
+)
 from budget_sid.splits import USER_PROTOCOLS, assert_test_events_unused, assert_test_unused, split_val_users
 from budget_sid.stop_gate import request_ndcg
 
@@ -103,7 +112,9 @@ SEED_NOTE = (
 FULL_P2_NOTE = (
     "Full P2 features are history_length, first_step_entropy, candidate_prob_gap, "
     "and top1_prob from budget_sid.features.extract_features after the shared first "
-    "decoding step. score_beam_ndcg per_request.jsonl stores beam nDCG and "
+    "decoding step. Boundary columns (top20_cum_prob, prob_gap_p20_p21, "
+    "prob_sum_ranks_21_60) are used when every validation row has them. They are "
+    "not imputed. score_beam_ndcg per_request.jsonl stores beam nDCG and "
     "delta_ndcg@20 only. It has no logits. Pass --features with those columns, or "
     "history_length plus logits. This replay does not invent logits. Entropy stays "
     "off until first_step_entropy is joined. history_length may come from --samples, "
@@ -326,7 +337,9 @@ def replay_records(
     names = _common_feature_names(train_rows + budget_rows)
     feature_report["feature_names"] = list(names)
     feature_report["logit_features_present"] = all(name in names for name in LOGIT_FEATURES)
-    feature_report["full_p2_ready"] = list(names) == list(FEATURE_NAMES)
+    feature_report["full_p2_ready"] = all(name in names for name in FEATURE_NAMES)
+    feature_report["boundary_features_ready"] = all(name in names for name in BOUNDARY_FEATURE_NAMES)
+    feature_report["boundary_feature_names"] = [name for name in BOUNDARY_FEATURE_NAMES if name in names]
     feature_report["full_p2_blockers"] = _feature_blockers(names)
     feature_report["invented_logits"] = False
     fitted = _fit_predictors(
@@ -387,7 +400,8 @@ def replay_records(
         "grid_recommender_started": False,
         "invented_logits": False,
         "p3_started": False,
-        "boundary_features_dumped": False,
+        "grid_pin_changed": False,
+        "boundary_features_dumped": bool(feature_report["boundary_features_ready"]),
         "mse_is_not_the_allocation_metric": True,
     }
     if include_assignments:
@@ -490,6 +504,7 @@ def command_replay_budgets(
                 "grid_recommender_started": False,
                 "invented_logits": False,
                 "p3_started": False,
+                "grid_pin_changed": False,
                 "seeds_retrain_recommender": False,
                 "seed_note": SEED_NOTE,
             }
@@ -529,7 +544,8 @@ def _public_payload(payloads: list[dict]) -> dict:
         "grid_recommender_started": False,
         "invented_logits": False,
         "p3_started": False,
-        "boundary_features_dumped": False,
+        "grid_pin_changed": False,
+        "boundary_features_dumped": bool(first.get("boundary_features_dumped", False)),
     }
 
 
@@ -712,10 +728,12 @@ def _curve_summary(public: dict, payloads: list[dict]) -> dict:
 
 
 def _fit_predictors(train_rows, budget_rows, *, names, alpha, seed, blockers):
+    uses_boundary = all(name in names for name in BOUNDARY_FEATURE_NAMES)
     ridge_info = {
         "status": "blocked",
         "model": "ridge",
         "feature_names": list(names),
+        "boundary_features": uses_boundary,
         "alpha": float(alpha),
         "n_train_rows": len(train_rows),
         "split_b_mse": None,
@@ -727,7 +745,7 @@ def _fit_predictors(train_rows, budget_rows, *, names, alpha, seed, blockers):
         "max_depth": HGB_MAX_DEPTH,
         "max_iter": HGB_MAX_ITER,
         "same_features_as_ridge": True,
-        "boundary_features": False,
+        "boundary_features": uses_boundary,
         "feature_names": list(names),
         "split_b_mse": None,
         "reason": "No non-label feature is present on every validation row. " + FULL_P2_NOTE,
@@ -747,6 +765,7 @@ def _fit_predictors(train_rows, budget_rows, *, names, alpha, seed, blockers):
             "status": "fit",
             "model": "ridge",
             "feature_names": list(names),
+            "boundary_features": uses_boundary,
             "alpha": float(alpha),
             "n_train_rows": len(train_rows),
             "split_b_mse": float(np.mean((ridge_pred - budget_target) ** 2)),
@@ -762,7 +781,7 @@ def _fit_predictors(train_rows, budget_rows, *, names, alpha, seed, blockers):
         hgb_info = dict(hgb_info)
         hgb_info["feature_names"] = list(names)
         hgb_info["same_features_as_ridge"] = True
-        hgb_info["boundary_features"] = False
+        hgb_info["boundary_features"] = uses_boundary
         if model is not None:
             hgb_pred = np.asarray(model.predict(budget_matrix), dtype=np.float64)
             hgb_info["split_b_mse"] = float(np.mean((hgb_pred - budget_target) ** 2))
@@ -1179,7 +1198,7 @@ def _resolve_protocol(rows, requested: str) -> str:
 
 def _common_feature_names(rows) -> tuple[str, ...]:
     present = []
-    for name in FEATURE_NAMES:
+    for name in ROUTING_FEATURE_NAMES:
         if rows and all(name in row["features"] for row in rows):
             present.append(name)
     return tuple(present)
@@ -1296,7 +1315,7 @@ def _feature_payload(row: dict) -> dict:
     nested = row.get("features")
     if isinstance(nested, dict):
         payload.update(nested)
-    for name in list(FEATURE_NAMES) + ["logits", *sorted(LABEL_FEATURE_KEYS)]:
+    for name in list(ROUTING_FEATURE_NAMES) + ["logits", *sorted(LABEL_FEATURE_KEYS)]:
         if name in row and name not in payload:
             payload[name] = row[name]
     return payload
@@ -1312,26 +1331,37 @@ def _clean_feature_payload(payload: dict) -> tuple[dict, list[str]]:
         if _is_label_key(key):
             dropped.append(str(key))
             continue
-        if key in FEATURE_NAMES and _is_number(value):
+        if key in ROUTING_FEATURE_NAMES and _is_number(value):
             cleaned[key] = float(value)
     return cleaned, dropped
 
 
 def _apply_logits(cleaned: dict, logits) -> list[str]:
-    """Fill entropy, gap, and top1 from supplied logits after history length is known.
+    """Fill first-step columns from supplied logits after history length is known.
 
     Logits are not synthesized. A vector that arrived without any history-length
-    source is reported and left unused.
+    source is reported and left unused. Boundary columns are filled only when
+    the vector is long enough to name ranks 1..60. A shorter vector stays on
+    the four-scalar path and is not padded.
     """
-    if logits is None or any(name in cleaned for name in LOGIT_FEATURES):
+    if logits is None:
+        return []
+    have_scalars = any(name in cleaned for name in LOGIT_FEATURES)
+    have_boundary = all(name in cleaned for name in BOUNDARY_FEATURE_NAMES)
+    if have_scalars and have_boundary:
         return []
     history_length = cleaned.get("history_length")
     if history_length is None:
         return ["logits_without_history_length"]
-    extracted = extract_features(int(history_length), logits)
-    for name in LOGIT_FEATURES:
-        cleaned[name] = float(extracted[name])
-    cleaned.setdefault("history_length", float(extracted["history_length"]))
+    if not have_scalars:
+        extracted = extract_features(int(history_length), logits)
+        for name in LOGIT_FEATURES:
+            cleaned[name] = float(extracted[name])
+        cleaned.setdefault("history_length", float(extracted["history_length"]))
+    if not have_boundary and int(as_float_array(logits).size) >= BOUNDARY_TAIL_RANK:
+        extracted = extract_boundary_features(int(history_length), logits)
+        for name in BOUNDARY_FEATURE_NAMES:
+            cleaned[name] = float(extracted[name])
     return []
 
 

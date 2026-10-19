@@ -18,7 +18,7 @@ GRID 不放进本仓库，只用 `scripts/pin_grid.sh` 锁在 commit `2fe3475b2d
 - Pinned GRID commit `2fe3475b2d369580234093f35d52b1a2f54d0472`. GRID is not vendored.
 - 2026-10-17 SeetaCloud RTX 4090: fixed beams 20/40/60 finished (exit 0). Benefit-aware stop-gate is not wired to those GRID outputs.
 - P1 reads leak-safe `per_request.jsonl` when that file is present. The transcribed SeetaCloud summary does not clear P2. The validation pass did (`p2_worth_doing=true`). See `docs/P1_BENEFIT_ANALYSIS.md` and `docs/P2_OFFLINE_REPLAY.md`.
-- P2.1 is offline allocation quality on a pre-declared upgrade fraction of validation split B (default 0%, 1%, 5%, 10%, 25%, 50%; average beam = 20 + 40×fraction). Random, entropy, and benefit share that quota. Primary metrics are final nDCG@20 and net Δ versus all-beam 20. `n_positive_captured` and negative loss are explanatory. Seeds 42, 43, and 44 reshuffle the A/B split and the replay; they do not retrain the recommender. Under the old narrow quota (`min` of B's positive-Δ count and the beam-40 ceiling), both the history-length-only replay and the four-feature replay on SeetaCloud failed to beat random and entropy. P3 stays gated. The fraction curve runs on the existing `per_request.jsonl` and feature file. A val-only full first-step logits cache is still a SeetaCloud job, for boundary features in a later change. See `docs/P2_OFFLINE_REPLAY.md`.
+- P2.1 is offline allocation quality on a pre-declared upgrade fraction of validation split B (default 0%, 1%, 5%, 10%, 25%, 50%; average beam = 20 + 40×fraction). Random, entropy, and benefit share that quota. Primary metrics are final nDCG@20 and net Δ versus all-beam 20. `n_positive_captured` and negative loss are explanatory. Seeds 42, 43, and 44 reshuffle the A/B split and the replay; they do not retrain the recommender. Under the old narrow quota (`min` of B's positive-Δ count and the beam-40 ceiling), both the history-length-only replay and the four-feature replay on SeetaCloud failed to beat random and entropy. P3 stays gated until benefit beats both random and entropy on those primary metrics under the pre-declared fractions, stably across seeds 42, 43, and 44. The boundary arm caches hierarchy-0 logits (`scripts/dump_first_step_logits.sh`, validation by default) and joins `top20_cum_prob`, `prob_gap_p20_p21`, and `prob_sum_ranks_21_60` through `replay_budgets --features`. This checkout does not run that GPU dump and does not claim the arm won. See `docs/P2_OFFLINE_REPLAY.md`.
 - P0 eval audit does not retrain and does not claim a benefit-aware gain. It exports leak-safe history/target samples and can score NDCG@5, NDCG@10, and NDCG@20 per request. See `docs/P0_EVAL_AUDIT.md`. The 2026-10-17 `tiger_inference_flat` rankings keep the target event in the encoder input, so they are not leak-safe ΔNDCG. Re-run beams with `scripts/run_leak_safe_beams.sh` on the exported history. The logged test nDCG@5 and nDCG@10 came from `NextKTokenMasking` and are not that leak.
 - Checkpoint stays on the GPU machine. It is not in git.
 - Scripts log `SKIP_SHUTDOWN` and do not power the instance off.
@@ -205,22 +205,23 @@ Oracle 上界单独报，只升级正 Δ，按 Δ 从高到低，花到正例用
 
 旧的窄名额是 `n_quota = min(B 上正 Δ 条数, 平均 beam 40 的上限)`。SeetaCloud 上两次回放都没能在这个名额下打赢随机和熵：只接 `history_length` 时，Ridge 大约抓到 0% 的正 Δ 质量，nDCG@20 约 0.0566，和随机的约 0.0567 打平或更差，熵比较被跳过；四特征（history length、熵、概率差、top1）那次同样没有打赢随机和熵。这组结论是报告值，本仓库没有重算，也不另造一张四特征的 nDCG 表。`--quota-mode positive_count` 还能复现那条窄名额，但默认已经换成固定比例。P3 仍然关上。
 
-`per_request.jsonl` 没有首步 logits。缺列写在 `full_p2_blockers` 里，不补假 logits。比例曲线可以在已经有的 `per_request.jsonl` 和 `first_step_features.jsonl` 上跑，这一步是 CPU。后面要做边界特征时，还缺 SeetaCloud 上的验证集完整首步 logits 缓存（不只是熵、gap、top1）。那是下一次改动，不在这一次里。
+`per_request.jsonl` 没有首步 logits。缺列写在 `full_p2_blockers` 里，不补假 logits。四特征的比例曲线可以在已经有的 `per_request.jsonl` 和 `first_step_features.jsonl` 上跑，这一步是 CPU。边界特征需要验证集上完整的第 0 层 logits，而不只是熵、gap、top1。`scripts/dump_first_step_logits.sh` 把向量缓存成 npz（默认只跑验证集；没有 `predict_rows.jsonl` 时先跑全量再丢掉非验证行），`extract_boundary_features` 在 CPU 上写出 `top20_cum_prob`、`prob_gap_p20_p21`、`prob_sum_ranks_21_60`，再用 `replay_budgets --features` 接上。`request_id` 对回放，`predict_key` 对 GRID 的 `user_id`。目标是否落在 top-20 里是事后归因，不进路由特征。P3 仍然关上：收益感知要在预先声明的比例上，按种子 42、43、44 稳定地同时打赢随机和熵的净 nDCG@20，这一次不声称已经打赢。
 
 首步特征用泄漏安全的历史目录（目标事件不在历史里），按 `predict_index.jsonl` 的 `request_id` 顺序写出。GRID 的 `predict_step` 不返回 logits；dump 调用的是 pinned `generate()` 在第 0 层算出 `candidate_logits` 的那三步，然后停住。checkpoint 或张量缺失就非零退出，不写零向量。这不是延迟，也不是线上收益感知。
 
 ```bash
 python -m budget_sid replay_budgets --smoke
 python -m budget_sid dump_first_step_features --smoke
-SID_PATH=/path/to/semantic_ids.pt bash scripts/dump_first_step_features.sh
+python -m budget_sid dump_first_step_logits --smoke
+SID_PATH=/path/to/semantic_ids.pt bash scripts/dump_first_step_logits.sh
 python -m budget_sid replay_budgets \
   --per-request outputs/leak_safe_beams/per_request.jsonl \
   --summary outputs/leak_safe_beams/summary.json \
-  --features outputs/leak_safe_beams/first_step_features.jsonl \
+  --features outputs/leak_safe_beams/boundary_features.jsonl \
   --user-protocol temporal_loo \
   --seeds 42,43,44 \
   --fractions 0,0.01,0.05,0.10,0.25,0.50 \
-  --output-dir outputs/p2_replay
+  --output-dir outputs/p2_replay_boundary
 ```
 
 字段、对齐方式和 SeetaCloud 命令在 `docs/P2_OFFLINE_REPLAY.md`。
@@ -245,7 +246,7 @@ python -m budget_sid replay_budgets \
 未完成：
 
 - [ ] 在已有的 `per_request.jsonl` 和 `first_step_features.jsonl` 上跑 P2.1 比例曲线（CPU）。P3 仍然关上。
-- [ ] SeetaCloud 上导出验证集完整首步 logits 缓存（val-only，不只是 entropy/gap/top1），再做边界特征。这一次不包含那份缓存。
+- [ ] 在 SeetaCloud 上跑 `scripts/dump_first_step_logits.sh`（验证集第 0 层 logits 缓存，再抽边界特征，然后跑比例曲线）。代码在这一次里。GPU 结果还不在仓库里。P3 仍然关上。
 - [ ] 复查 P0 `verified_with_truncation`（audited-with-truncation 那条截断窗口）。本提交不重跑 GPU 审计。见 `docs/P0_EVAL_AUDIT.md`。
 - [ ] 把请求级收益预测接到 GRID `tiger_inference` 的输出上（ΔNDCG@20）
 - [ ] 验证集 A 训练收益模型，B 上选平均 beam ≤ 40 的阈值
