@@ -1,8 +1,8 @@
 # P2 offline replay
 
-P2 measures whether a ridge model can spend a **shared large-beam quota** on the requests that actually gain from beam 60. It is an offline allocation check on leak-safe validation labels.
+P2.1 measures whether a model can spend a **pre-declared upgrade fraction** better than random and entropy. A fraction `f` upgrades that share of validation split B from beam 20 to beam 60. The declared average beam is `20 + 40 * f`. It is an offline allocation check on leak-safe validation labels.
 
-It is not a latency result. It does not run GridRecommender, it does not time decoding, and it does not claim that benefit-aware routing will raise Beauty nDCG online. Those questions are P3.
+It is not a latency result. It does not run GridRecommender, it does not time decoding, and it does not claim that benefit-aware routing will raise Beauty nDCG online. P3 stays gated.
 
 ## Recorded validation pass
 
@@ -30,31 +30,41 @@ These are validation means. They are not the pooled n = 67089 summary in `artifa
 
 1. Read `per_request.jsonl` from `score_beam_ndcg` (`ranking_source=leak_safe_history`). A summary with `auditable_for_delta_ndcg: false` is refused. A sibling `summary.json` is read when `--summary` is omitted.
 2. Keep test events out. `user_protocol=auto` uses `temporal_loo` when a validation user also appears in test (Beauty leave-one-out), and `disjoint_users` otherwise. `temporal_loo` rejects a reused test `request_id` and allows the shared user. Training-split rows are ignored.
-3. Split validation **users** into disjoint A and B with `split_val_users` (seeded shuffle, independent of row order). Default seed is config `train.seed` (42). `--seeds 42,43,44` repeats the replay.
-4. Fit `fit_benefit_predictor` on A: ridge on standardized features, intercept unpenalized. The target is ΔnDCG@20 = nDCG@20(beam 60) − nDCG@20(beam 20).
-5. On B, give every non-oracle policy the **same** number of beam-60 slots:
+3. Split validation **users** into disjoint A and B with `split_val_users` (seeded shuffle, independent of row order). Default seed is config `train.seed` (42). `--seeds 42,43,44` repeats the replay. Those seeds reshuffle the A/B split and the random-policy scores. They are not independent recommender retrainings. The Beauty checkpoint stays the 2026-10-17 early stop.
+4. Fit `fit_benefit_predictor` on A: ridge on standardized features, intercept unpenalized. The target is ΔnDCG@20 = nDCG@20(beam 60) − nDCG@20(beam 20). When scikit-learn is installed (`pip install -e ".[hgb]"`), the same columns also fit `HistGradientBoostingRegressor` with `max_depth=3` and `max_iter=50`. That tree is another benefit policy under the same quota. It is not a boundary-feature model. A missing scikit-learn install leaves ridge in place and marks `benefit_aware_hgb` unavailable.
+5. On B, sweep pre-declared upgrade fractions. The default list is 0%, 1%, 5%, 10%, 25%, and 50%:
 
 ```text
-n_quota = min(n_positive on B, n_large_for_budget(n_B))
+n_quota = floor(fraction * n_B)
+declared average beam = 20 + 40 * fraction
+realized average beam = 20 + 40 * (n_quota / n_B)
 ```
 
-`n_large_for_budget` is the beam-40 ceiling (at most half the requests on beam 60). The quota does not fill unused ceiling with non-positive requests. P1 rejects that force-fill. The quota is also not the Bernoulli draw in `RandomBudgetPolicy` (`p = 0.5`), which only matches mean beam 40 in expectation.
-
-The quota **count** is the label marginal on B (how many positive requests the corrected oracle would upgrade). Random, entropy, and benefit-aware do not read which request has which delta when they pick. The oracle ranks B by true delta and is the upper bound, not a deployable policy.
+`floor` keeps the realized average beam at or under the declaration. At 50%, `n_quota` matches `n_large_for_budget` (the beam-40 ceiling). Random, entropy, ridge, and the tree (when it runs) each upgrade that same count. One score ranking is drawn per seed; a larger fraction is a prefix of that ranking, so the policies share one quota at every point. The count is a fraction of requests. `quota_derived_from_positive_count` is false. It is not `min(n_positive on B, ceiling)`.
 
 Tie-break is `request_id`, so equal scores still spend exactly `n_quota` slots. `select_threshold` is not used here: it targets the ceiling and can drop ties below that count, so policies would not share one quota.
 
+The oracle upper bound is reported beside each point, with the compute it actually used. It upgrades positive-Δ requests only, highest delta first, and stops at `min(n_positive, n_quota)`. Leftover slots stay at beam 20. It does not upgrade a negative-Δ or zero-Δ request to fill the fraction. When positives are scarce, the oracle mean beam stays near 20 while the policies sit on the declared budget. `same_compute_as_policies` records that difference.
+
+`--quota-mode positive_count` restores the older narrow diagnostic, `n_quota = min(n_positive on B, ceiling)`, as a single point. That flag does not take `--fractions`. It is not the default.
+
 ## Metrics
 
-On B, for random, entropy (when `first_step_entropy` is joined), benefit-aware, and the oracle:
+Primary metrics, on B, for every policy that runs:
 
-- mean nDCG@20 of the chosen beam (beam 60 if selected, otherwise beam 20)
-- mean beam, which matches across those policies because `n_quota` matches
-- positive-Δ mass captured, as a fraction of the oracle's captured mass under that quota
+- `mean_ndcg@20` of the chosen beam (beam 60 if selected, otherwise beam 20)
+- `delta_vs_all_beam20`, that mean minus the all-beam-20 mean
 
-Uniform beam 20 / 40 / 60 and the rejected force-fill are context. They are not quota-matched policies. Split-B MSE of the ridge model is a fit diagnostic. It is not the allocation result.
+They live under `primary` in the summary JSON. `primary_metrics` lists those two names.
 
-`beats_uniform_beam40` is not required for the quota to be well defined. A policy can capture positive mass and still lose to uniform beam 40 when beam 40 is ahead of beam 20 on the requests left at beam 20. The mean nDCG is the number that shows that.
+Explanatory metrics live under `explanatory` and are not the allocation result:
+
+- `n_positive_captured`, how many selected requests have positive Δ
+- `negative_loss`, the sum of `-Δ` over selected requests whose Δ is negative
+
+`explanatory_metrics_are_not_primary` is true. Split-B MSE is a fit diagnostic in the same way. Uniform beam 20 / 40 / 60 and the rejected force-fill are context on `split_b`. They are not points on the quota curve.
+
+The curve summary repeats the primary block and the explanatory block as separate objects, and it repeats the oracle's own `n_large` and `mean_beam`.
 
 ## Features
 
@@ -80,11 +90,16 @@ The ridge features, from `budget_sid.features`, are:
 
 Priority for history length is the list above. A disagreement between samples and `target_position` is counted. Samples win. Incomplete columns are dropped for every validation row. They are not imputed.
 
-### Recorded partial replay
+### Recorded narrow-quota result
 
-A SeetaCloud replay that only had `history_length` (from `target_position`) fit ridge on that column alone. Entropy was skipped because `first_step_entropy`, `candidate_prob_gap`, and `top1_prob` were not in the joined features. That run captured about 0% of the positive-Δ mass and tied or lost to random (nDCG@20 about 0.0566 versus about 0.0567). This checkout does not recompute those two numbers. They are why the four-feature file has to be produced before anyone reads the ridge row as a full P2 result.
+Both SeetaCloud replays below used the old narrow quota, `n_quota = min(n_positive on B, ceiling)`. Neither beat random and entropy. This checkout does not recompute them. P3 stays gated. P2.1 replaces that quota with the fixed-fraction curve. Boundary features, which need a val-only full first-step logits cache, are the next change after that GPU dump. They are not in this protocol change.
 
-Until `first_step_features.jsonl` is joined, a replay still behaves that way:
+| replay | what was joined | result under the narrow quota |
+| --- | --- | --- |
+| history length only | `history_length` from `target_position` | Ridge captured about 0% of the positive-Δ mass and tied or lost to random (nDCG@20 about 0.0566 versus about 0.0567). Entropy was skipped. |
+| four features | `history_length`, `first_step_entropy`, `candidate_prob_gap`, `top1_prob` | Benefit-aware did not beat random or entropy. This repo has no separate nDCG table for that run, and this change does not invent one. |
+
+Until `first_step_features.jsonl` is joined, a replay still behaves like the history-length row:
 
 - entropy is skipped
 - ridge uses whatever non-label columns were actually joined
@@ -109,7 +124,7 @@ Pinned GRID `SemanticIDEncoderDecoder.generate` (commit `2fe3475`) computes hier
 
 If the logit tensor, the MLP, the checkpoint `state_dict`, or `user_id_list` is missing, the process exits non-zero and does not write a zero-filled file. A partial `load_state_dict` is refused, because a randomly initialized `decoder_mlp` would look like real logits.
 
-P3 stays gated until benefit-aware routing beats random and entropy on positive-Δ mass and nDCG@20 under the same quota. This dump does not start P3, does not time decoding, and does not claim an online win.
+P3 stays gated. The narrow-quota replays above did not clear it, and this dump does not start P3, does not time decoding, and does not claim an online win. A later boundary-feature model still has to beat random and entropy on primary nDCG@20 and `delta_vs_all_beam20` under the same pre-declared fraction before P3 opens.
 
 ## How to run
 
@@ -120,16 +135,31 @@ python -m budget_sid replay_budgets --smoke
 python -m budget_sid replay_budgets --smoke --seeds 42,43,44
 ```
 
-On SeetaCloud, from the repo that already has the leak-safe beams. This does not start a GPU job and does not power the machine off.
+The default sweep is `0,0.01,0.05,0.10,0.25,0.50`. One run writes `replay_summary.json`, `curve_summary.json`, and `assignments_seed<seed>.jsonl`. Declared average beam at those fractions is 20, 20.4, 22, 24, 30, and 40.
+
+On the machine that already has `per_request.jsonl` and `first_step_features.jsonl`, the curve is a CPU replay. It does not start a GPU job and does not power the machine off. Seeds 42, 43, and 44 are A/B split and replay seeds.
 
 ```bash
 python -m budget_sid replay_budgets \
   --per-request outputs/leak_safe_beams/per_request.jsonl \
   --summary outputs/leak_safe_beams/summary.json \
-  --samples outputs/p0_eval/eval_samples.jsonl \
+  --features outputs/leak_safe_beams/first_step_features.jsonl \
   --user-protocol temporal_loo \
   --seeds 42,43,44 \
+  --fractions 0,0.01,0.05,0.10,0.25,0.50 \
   --output-dir outputs/p2_replay
+```
+
+`--fractions` can be omitted; that list is the default. `0%,1%,5%,10%,25%,50%` and `0,1,5,10,25,50` parse as the same percents. The legacy narrow quota is explicit:
+
+```bash
+python -m budget_sid replay_budgets \
+  --per-request outputs/leak_safe_beams/per_request.jsonl \
+  --features outputs/leak_safe_beams/first_step_features.jsonl \
+  --user-protocol temporal_loo \
+  --seeds 42,43,44 \
+  --quota-mode positive_count \
+  --output-dir outputs/p2_replay_legacy
 ```
 
 Produce the feature file on the GPU machine, from the same history-only folder the beams used. `DRY_RUN=1` checks that folder and the checkpoint file and does not load the model. A missing checkpoint exits non-zero. The script prints `SKIP_SHUTDOWN` and does not power the machine off.
@@ -140,19 +170,13 @@ SID_PATH=/path/to/semantic_ids.pt bash scripts/dump_first_step_features.sh
 
 That writes `outputs/leak_safe_beams/first_step_features.jsonl` next to `per_request.jsonl`. Then re-run the replay. This is still offline allocation. It is not P3.
 
-```bash
-python -m budget_sid replay_budgets \
-  --per-request outputs/leak_safe_beams/per_request.jsonl \
-  --summary outputs/leak_safe_beams/summary.json \
-  --features outputs/leak_safe_beams/first_step_features.jsonl \
-  --user-protocol temporal_loo \
-  --seeds 42,43,44 \
-  --output-dir outputs/p2_replay
-```
-
 `--samples` is optional if `target_position` is present. The feature file's `history_length` wins over it. `--dry-run` prints the summary and does not write `--output-dir`.
 
-`outputs/` is gitignored. The replay command writes `replay_summary.json` and `assignments_seed<seed>.jsonl`. The dump also writes `first_step_features_manifest.json` beside the jsonl. CPU smoke, with the scripted recommender rather than GRID logits:
+The fraction sweep itself needs the existing `per_request.jsonl` plus the existing feature file (or `history_length` from samples / `target_position`). It does not need a new GPU pass.
+
+What still needs SeetaCloud, and is out of scope here: a **val-only full first-step logits cache**. `first_step_features.jsonl` stores the four scalars (`history_length`, entropy, gap, top1). Boundary features need the hierarchy-0 logit vector for validation requests. That dump is the next PR after the GPU cache exists. This change does not write it and does not invent the missing logits.
+
+`outputs/` is gitignored. The replay command writes `replay_summary.json`, `curve_summary.json`, and `assignments_seed<seed>.jsonl`. The dump also writes `first_step_features_manifest.json` beside the jsonl. CPU smoke, with the scripted recommender rather than GRID logits:
 
 ```bash
 python -m budget_sid dump_first_step_features --smoke
@@ -160,4 +184,4 @@ python -m budget_sid dump_first_step_features --smoke
 
 ## What this is not
 
-No benefit-aware online result. No latency, throughput, or memory claim. No GridRecommender. No second decode. The 2026-10-17 `tiger_inference_flat` rankings are not these labels. A ridge model cannot beat the oracle that already sees Δ on B; the oracle row is a bound.
+No benefit-aware online result. No latency, throughput, or memory claim. No GridRecommender. No second decode. No P3. No boundary-feature dump and no invented logits. The 2026-10-17 `tiger_inference_flat` rankings are not these labels. A ridge model cannot beat the positive-Δ oracle that already sees Δ on B; that oracle row is a bound, and its mean beam is the compute it used.

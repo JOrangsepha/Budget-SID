@@ -25,8 +25,11 @@
 # predict folder and the checkpoint file and does not load the model.
 # SKIP_BUILD=1 reuses an existing predict folder.
 #
-# Then re-run P2 (CPU, no second decode). P3 stays gated until benefit-aware
-# beats random and entropy on positive-Δ mass and nDCG@20 under the same quota:
+# Then re-run the P2.1 fraction sweep (CPU, no second decode). The default
+# fractions are 0, 0.01, 0.05, 0.10, 0.25, 0.50 (average beam = 20 + 40*fraction).
+# Seeds 42, 43, 44 reshuffle the A/B split. They do not retrain the recommender.
+# P3 stays gated. The narrow positive-count quota did not clear benefit over
+# random and entropy. --quota-mode positive_count is that old diagnostic.
 #
 #   python -m budget_sid replay_budgets \
 #     --per-request outputs/leak_safe_beams/per_request.jsonl \
@@ -34,6 +37,7 @@
 #     --features outputs/leak_safe_beams/first_step_features.jsonl \
 #     --user-protocol temporal_loo \
 #     --seeds 42,43,44 \
+#     --fractions 0,0.01,0.05,0.10,0.25,0.50 \
 #     --output-dir outputs/p2_replay
 #
 # Hydra, same fixes as scripts/run_leak_safe_beams.sh:
@@ -146,7 +150,8 @@ echo "dataloader data_loading.predict_dataloader_config.dataloader.num_workers=0
 echo "data_folder data_loading.predict_dataloader_config.dataloader.data_folder=${PREDICT_DIR}"
 echo "features ${FEATURES}"
 echo "aligns with ${PER_REQUEST} on request_id in predict_index order"
-echo "P3 stays gated until benefit beats random and entropy on positive-Δ mass and nDCG@20 under the same quota."
+echo "P2.1 default upgrade fractions: 0,0.01,0.05,0.10,0.25,0.50. Average beam = 20 + 40*fraction."
+echo "P3 stays gated. The narrow positive-count quota did not clear benefit over random and entropy."
 
 replay_line=(
   "${PY}" -m budget_sid replay_budgets
@@ -155,6 +160,7 @@ replay_line=(
   --features "${FEATURES}"
   --user-protocol temporal_loo
   --seeds 42,43,44
+  --fractions 0,0.01,0.05,0.10,0.25,0.50
   --output-dir "${ROOT}/outputs/p2_replay"
 )
 echo "after the dump: ${replay_line[*]}"

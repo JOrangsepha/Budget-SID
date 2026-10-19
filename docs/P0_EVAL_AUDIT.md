@@ -104,6 +104,8 @@ GRID's inference collate keeps at most `sequence_length=120` tokens, which is 30
 
 The exported `history` is the strict prefix of the stored sequence. It does not contain the target event. A long history is trimmed again at inference time, from the left, and that trim still does not see the target. Do not treat `protocol_exact=false` as label leakage when `n_target_event_in_history=0`.
 
+TODO: re-audit the P0 `verified_with_truncation` path (the audited-with-truncation window, `status=verified_with_truncation`). This note does not re-run that GPU audit.
+
 ## Leak-safe beams
 
 `scripts/run_leak_safe_beams.sh` is the GPU step after the export. It does not retrain. It does not read the 2026-10-17 `tiger_inference_flat` pickles. Those files were produced by `collate_fn_inference_for_sequence` on sequences that end with the target event. Scoring them with `--ranking-source leak_safe_history` would mark a contaminated delta as auditable. Do not do that.

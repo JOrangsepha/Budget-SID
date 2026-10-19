@@ -376,8 +376,8 @@ def test_feature_file_joins_replay_on_request_id(tmp_path):
     assert joined["features"]["feature_names"] == list(FEATURE_NAMES)
     assert joined["features"]["invented_logits"] is False
     assert joined["invented_logits"] is False
-    assert joined["policies"]["entropy"]["status"] == "ran"
-    assert joined["policies"]["benefit_aware"]["status"] == "ran"
+    assert {point["policies"]["entropy"]["status"] for point in joined["curve"]} == {"ran"}
+    assert {point["policies"]["benefit_aware"]["status"] for point in joined["curve"]} == {"ran"}
     assert joined["latency_claimed"] is False
     assert joined["grid_recommender_started"] is False
     first = json.loads(features_path.read_text(encoding="utf-8").splitlines()[0])

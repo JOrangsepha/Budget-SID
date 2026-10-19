@@ -16,6 +16,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=7"]
 gpu = ["torch>=2.1"]
+hgb = ["scikit-learn>=1.3"]
 
 [project.scripts]
 budget-sid = "budget_sid.cli:main"
