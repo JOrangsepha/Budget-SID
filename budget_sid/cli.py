@@ -13,6 +13,10 @@ from budget_sid.config import default_config_path, load_config
 from budget_sid.eval_audit import command_audit_eval_leakage
 from budget_sid.eval_samples import command_export_eval_samples
 from budget_sid.first_step_dump import command_dump_first_step_features
+from budget_sid.first_step_logits import (
+    command_dump_first_step_logits,
+    command_extract_boundary_features,
+)
 from budget_sid.leak_safe_predict import command_build_leak_safe_predict, command_export_leak_safe_rankings
 from budget_sid.experiment import (
     command_build_semantic_ids,
@@ -37,6 +41,8 @@ COMMANDS = (
     "analyze_benefit",
     "replay_budgets",
     "dump_first_step_features",
+    "dump_first_step_logits",
+    "extract_boundary_features",
 )
 
 
@@ -70,6 +76,8 @@ def build_parser() -> argparse.ArgumentParser:
             "build_leak_safe_predict",
             "export_leak_safe_rankings",
             "dump_first_step_features",
+            "dump_first_step_logits",
+            "extract_boundary_features",
         }:
             command.add_argument(
                 "--dry-run",
@@ -136,6 +144,52 @@ def build_parser() -> argparse.ArgumentParser:
                 "--per-request",
                 default=None,
                 help="optional per_request.jsonl; request_id order must match the predict index",
+            )
+        if name == "dump_first_step_logits":
+            command.add_argument(
+                "--predict-dir",
+                default=None,
+                help="history-only folder from build_leak_safe_predict (not GRID's testing split)",
+            )
+            command.add_argument(
+                "--output",
+                default=None,
+                help="npz cache of hierarchy-0 logit vectors, joined on request_id and predict_key",
+            )
+            command.add_argument("--ckpt", default=None, help="tiger_train_flat checkpoint; required on GPU")
+            command.add_argument("--semantic-id-path", default=None)
+            command.add_argument("--data-dir", default=None, help="Beauty data dir passed through to tiger_inference_flat")
+            command.add_argument("--grid-dir", default=None, help="pinned GRID checkout (commit 2fe3475)")
+            command.add_argument(
+                "--per-request",
+                default=None,
+                help="optional per_request.jsonl; every cached request_id must appear, and the split must be covered",
+            )
+            command.add_argument(
+                "--split",
+                default="val",
+                help="val (default) caches validation rows; all caches every predict-index row",
+            )
+            command.add_argument(
+                "--filtered-predict-dir",
+                default=None,
+                help="where to write the val-only history folder when predict_rows.jsonl exists",
+            )
+        if name == "extract_boundary_features":
+            command.add_argument(
+                "--logits",
+                default=None,
+                help="hierarchy-0 logits npz from dump_first_step_logits",
+            )
+            command.add_argument(
+                "--output",
+                default=None,
+                help="boundary_features.jsonl joined by replay_budgets --features on request_id",
+            )
+            command.add_argument(
+                "--split",
+                default=None,
+                help="optional val or all filter; default keeps every row in the cache",
             )
         if name == "analyze_benefit":
             command.add_argument(
@@ -286,6 +340,28 @@ def main(argv: list[str] | None = None) -> int:
             data_dir=args.data_dir,
             grid_dir=args.grid_dir,
             per_request=args.per_request,
+            dry_run=args.dry_run,
+        )
+    elif args.command == "dump_first_step_logits":
+        payload = command_dump_first_step_logits(
+            smoke=smoke,
+            predict_dir=args.predict_dir,
+            output=args.output,
+            ckpt=args.ckpt,
+            semantic_id_path=args.semantic_id_path,
+            data_dir=args.data_dir,
+            grid_dir=args.grid_dir,
+            per_request=args.per_request,
+            split=args.split,
+            filtered_predict_dir=args.filtered_predict_dir,
+            dry_run=args.dry_run,
+        )
+    elif args.command == "extract_boundary_features":
+        payload = command_extract_boundary_features(
+            smoke=smoke,
+            logits=args.logits,
+            output=args.output,
+            split=args.split,
             dry_run=args.dry_run,
         )
     elif args.command == "replay_budgets":

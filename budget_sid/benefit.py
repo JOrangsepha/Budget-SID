@@ -36,9 +36,9 @@ class BenefitPredictor:
         return design @ self.coef
 
 
-# Depth and iteration caps for the optional tree model. The full
-# boundary-feature dump is a later change; this fit uses the same columns
-# as the ridge model.
+# Depth and iteration caps for the optional tree model. It fits whatever
+# columns the caller passes, the same list as ridge. Boundary columns are
+# included only when that list contains them.
 HGB_MAX_DEPTH = 3
 HGB_MAX_ITER = 50
 
@@ -56,7 +56,8 @@ def try_fit_hist_gradient_boosting(
     Returns ``(model, info)``. ``model`` is None when scikit-learn is not
     installed or the fit fails. Callers keep the ridge predictor either way.
     ``max_depth`` and ``max_iter`` stay at the caps above unless a test asks
-    otherwise. This is not a boundary-feature model.
+    otherwise. Boundary columns are included when the caller puts them in
+    ``features``.
     """
     limit = {
         "model": "HistGradientBoostingRegressor",
@@ -116,7 +117,7 @@ def try_fit_hist_gradient_boosting(
         "split_b_mse": None,
         "reason": (
             "Same joined columns as ridge, with max_depth and max_iter capped. "
-            "Boundary features are a later change and need a val-only full first-step logits cache."
+            "Boundary columns are included when the joined feature file has them."
         ),
     }
 

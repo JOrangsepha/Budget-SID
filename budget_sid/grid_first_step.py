@@ -36,6 +36,7 @@ from budget_sid.first_step_dump import (
     LOGITS_SOURCE_GRID,
     feature_rows_from_keyed_logits,
     require_logit_matrix,
+    require_logit_vector,
 )
 
 HYDRA_WORKERS = "data_loading.predict_dataloader_config.dataloader.num_workers=0"
@@ -280,9 +281,16 @@ def first_step_candidate_logits(module, *, attention_mask, input_ids, user_id):
     return matrix
 
 
-def rows_from_batches(module, batches, index_rows, *, device=None) -> list[dict]:
-    """Run the first step on each batch and join on ``predict_key``."""
-    logits_by_key: dict[int, object] = {}
+def collect_logits_by_key(module, batches, *, device=None) -> dict[int, np.ndarray]:
+    """Run the hierarchy-0 first step and keep one vector per ``predict_key``.
+
+    A missing tensor, an empty loader, or a duplicate key is an error. The
+    returned vectors are NumPy copies, so the caller can downcast them after
+    the GPU pass without another forward.
+    """
+    import numpy as np
+
+    logits_by_key: dict[int, np.ndarray] = {}
     eval_fn = getattr(module, "eval", None)
     if callable(eval_fn):
         eval_fn()
@@ -307,11 +315,17 @@ def rows_from_batches(module, batches, index_rows, *, device=None) -> list[dict]
                 raise MissingFirstStepLogits(
                     f"duplicate predict_key {key} in the dataloader. Refusing to keep one at random."
                 )
-            logits_by_key[key] = vector
+            logits_by_key[key] = np.array(require_logit_vector(vector), dtype=np.float64, copy=True)
     if not saw_batch:
         raise MissingFirstStepLogits(
             "the history-only predict loader yielded no batches. Refusing to invent logits."
         )
+    return logits_by_key
+
+
+def rows_from_batches(module, batches, index_rows, *, device=None) -> list[dict]:
+    """Run the first step on each batch and join on ``predict_key``."""
+    logits_by_key = collect_logits_by_key(module, batches, device=device)
     return feature_rows_from_keyed_logits(
         index_rows,
         logits_by_key,
@@ -377,6 +391,34 @@ def run_grid_first_step_dump(
     CUDA. A missing dependency or a missing tensor raises
     ``MissingFirstStepLogits``.
     """
+    logits_by_key = run_grid_first_step_logits_dump(
+        grid_dir=grid_dir,
+        data_dir=data_dir,
+        sid_path=sid_path,
+        ckpt=ckpt,
+        predict_dir=predict_dir,
+    )
+    return feature_rows_from_keyed_logits(
+        index_rows,
+        logits_by_key,
+        logits_source=LOGITS_SOURCE_GRID,
+    )
+
+
+def run_grid_first_step_logits_dump(
+    *,
+    grid_dir: str,
+    data_dir: str,
+    sid_path: str,
+    ckpt: str,
+    predict_dir: str,
+) -> dict[int, np.ndarray]:
+    """Same first step as the feature dump, returning the logit vectors.
+
+    ``load_state_dict(..., strict=True)`` is the only checkpoint load. The
+    caller decides whether the predict folder is the full history-only set or
+    a validation subset. Keys are the GRID ``user_id`` values (``predict_key``).
+    """
     root = Path(grid_dir)
     ckpt_path = Path(ckpt)
     if not ckpt_path.is_file():
@@ -395,13 +437,12 @@ def run_grid_first_step_dump(
     os.chdir(root)
     sys.path.insert(0, str(root))
     try:
-        return _run_loaded_dump(
+        return _load_and_collect_logits(
             root=root,
             data_dir=data_dir,
             sid_path=sid_path,
             ckpt=str(ckpt_path),
             predict_dir=predict_dir,
-            index_rows=index_rows,
         )
     finally:
         os.chdir(previous)
@@ -495,7 +536,7 @@ def _make_predict_trainer():
     )
 
 
-def _run_loaded_dump(*, root: Path, data_dir: str, sid_path: str, ckpt: str, predict_dir: str, index_rows):
+def _load_and_collect_logits(*, root: Path, data_dir: str, sid_path: str, ckpt: str, predict_dir: str):
     try:
         import torch
     except ImportError as exc:
@@ -535,4 +576,4 @@ def _run_loaded_dump(*, root: Path, data_dir: str, sid_path: str, ckpt: str, pre
     model = model.to(device)
     model.eval()
     with torch.inference_mode():
-        return rows_from_batches(model, loader, index_rows, device=device)
+        return collect_logits_by_key(model, loader, device=device)
