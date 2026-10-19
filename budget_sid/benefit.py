@@ -36,6 +36,91 @@ class BenefitPredictor:
         return design @ self.coef
 
 
+# Depth and iteration caps for the optional tree model. The full
+# boundary-feature dump is a later change; this fit uses the same columns
+# as the ridge model.
+HGB_MAX_DEPTH = 3
+HGB_MAX_ITER = 50
+
+
+def try_fit_hist_gradient_boosting(
+    features: np.ndarray,
+    delta_ndcg: np.ndarray,
+    *,
+    max_depth: int = HGB_MAX_DEPTH,
+    max_iter: int = HGB_MAX_ITER,
+    random_state: int = 0,
+):
+    """Fit HistGradientBoostingRegressor on the same columns as ridge.
+
+    Returns ``(model, info)``. ``model`` is None when scikit-learn is not
+    installed or the fit fails. Callers keep the ridge predictor either way.
+    ``max_depth`` and ``max_iter`` stay at the caps above unless a test asks
+    otherwise. This is not a boundary-feature model.
+    """
+    limit = {
+        "model": "HistGradientBoostingRegressor",
+        "max_depth": int(max_depth),
+        "max_iter": int(max_iter),
+        "early_stopping": False,
+        "same_features_as_ridge": True,
+        "boundary_features": False,
+    }
+    if int(max_depth) < 1 or int(max_iter) < 1:
+        raise ValueError("max_depth and max_iter must be positive")
+    if int(max_depth) > HGB_MAX_DEPTH or int(max_iter) > HGB_MAX_ITER:
+        raise ValueError(
+            f"HistGradientBoostingRegressor is capped at max_depth={HGB_MAX_DEPTH} "
+            f"and max_iter={HGB_MAX_ITER}"
+        )
+    try:
+        from sklearn.ensemble import HistGradientBoostingRegressor
+    except ImportError as exc:
+        return None, {
+            **limit,
+            "status": "unavailable",
+            "split_b_mse": None,
+            "reason": "scikit-learn is not installed; HistGradientBoostingRegressor was not fit",
+            "error": type(exc).__name__,
+        }
+    rows = np.asarray(features, dtype=np.float64)
+    target = np.asarray(delta_ndcg, dtype=np.float64).reshape(-1)
+    if rows.ndim != 2 or rows.shape[0] != target.shape[0]:
+        raise ValueError("features and delta_ndcg must describe the same requests")
+    if rows.shape[0] < 2:
+        raise ValueError("need at least two split-A requests to fit the predictor")
+    try:
+        model = HistGradientBoostingRegressor(
+            loss="squared_error",
+            max_depth=int(max_depth),
+            max_iter=int(max_iter),
+            early_stopping=False,
+            learning_rate=0.1,
+            min_samples_leaf=1,
+            random_state=int(random_state),
+        )
+        model.fit(rows, target)
+    except (TypeError, ValueError, RuntimeError) as exc:
+        return None, {
+            **limit,
+            "status": "unavailable",
+            "split_b_mse": None,
+            "reason": "HistGradientBoostingRegressor fit failed: " + str(exc),
+            "error": type(exc).__name__,
+        }
+    return model, {
+        **limit,
+        "status": "fit",
+        "random_state": int(random_state),
+        "n_train_rows": int(rows.shape[0]),
+        "split_b_mse": None,
+        "reason": (
+            "Same joined columns as ridge, with max_depth and max_iter capped. "
+            "Boundary features are a later change and need a val-only full first-step logits cache."
+        ),
+    }
+
+
 def fit_benefit_predictor(
     features: np.ndarray,
     delta_ndcg: np.ndarray,

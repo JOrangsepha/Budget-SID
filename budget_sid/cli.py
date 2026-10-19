@@ -193,6 +193,26 @@ def build_parser() -> argparse.ArgumentParser:
                 action="store_true",
                 help="score the replay and skip writing --output-dir",
             )
+            command.add_argument(
+                "--fractions",
+                default=None,
+                help=(
+                    "comma-separated upgrade fractions. Default is "
+                    "0,0.01,0.05,0.10,0.25,0.50 (0%%, 1%%, 5%%, 10%%, 25%%, 50%%). "
+                    "Declared average beam is 20 + 40*fraction. "
+                    "A trailing %% or any token above 1 reads the list as percents."
+                ),
+            )
+            command.add_argument(
+                "--quota-mode",
+                default="fixed_fraction",
+                choices=("fixed_fraction", "positive_count"),
+                help=(
+                    "fixed_fraction (default) is the P2.1 shared upgrade curve. "
+                    "positive_count is the legacy narrow diagnostic "
+                    "n_quota=min(n_positive, ceiling) and does not take --fractions."
+                ),
+            )
     return parser
 
 
@@ -282,6 +302,8 @@ def main(argv: list[str] | None = None) -> int:
             user_protocol=args.user_protocol,
             smoke=smoke,
             dry_run=args.dry_run,
+            fractions=args.fractions,
+            quota_mode=args.quota_mode,
         )
     elif args.command == "score_beam_ndcg":
         payload = command_score_beam_ndcg(
