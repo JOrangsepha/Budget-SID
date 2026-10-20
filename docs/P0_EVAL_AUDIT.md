@@ -1,6 +1,8 @@
 # P0 eval audit
 
-P0 makes the Beauty fixed-beam rankings auditable for offline ΔNDCG@20. It does not retrain TIGER or MiniLM, and it does not claim a benefit-aware gain. The benefit-aware stop-gate is still not wired.
+P0 makes the Beauty fixed-beam rankings auditable for offline ΔNDCG@20. It does not retrain TIGER or MiniLM, and it does not claim a benefit-aware gain.
+
+Archived 2026-10-20. The later offline routing experiments (P2.1 four features and the boundary arm) did not stably beat random or entropy, so the benefit-aware stop-gate was not wired to live GRID inference and P3 was not started. The decision and the validation-B table are in `docs/FINAL_RESULTS.md`. Large artifacts (checkpoint, logits npz, `per_request.jsonl`, SID tensor) stay on the SeetaCloud data disk at `/root/autodl-tmp/Budget-SID-archive-20261020/` and the working tree `/root/autodl-tmp/Budget-SID/`.
 
 ## What is label leakage
 
@@ -144,4 +146,4 @@ P1 should consume these files and still not start from the 2026-10-17 beam expor
 3. Use `per_request.jsonl` field `delta_ndcg@20` as the oracle label on validation rows: fit on user split A, choose the threshold on user split B, leave test events out. Shared user ids are allowed.
 4. Only then run the stop-gate. A gain on the old `tiger_inference_flat` rankings is not a benefit-aware result.
 
-The offline reading of the SeetaCloud summary is `docs/P1_BENEFIT_ANALYSIS.md`. That summary does not clear P2, and it does not claim a benefit-aware gain. On the machine that has the jsonl, run `python -m budget_sid analyze_benefit --per-request outputs/leak_safe_beams/per_request.jsonl --summary outputs/leak_safe_beams/summary.json`. The validation pass that set `p2_worth_doing=true` is replayed offline by `docs/P2_OFFLINE_REPLAY.md`.
+The offline reading of the SeetaCloud summary is `docs/P1_BENEFIT_ANALYSIS.md`. That summary does not clear P2, and it does not claim a benefit-aware gain. On the machine that has the jsonl, run `python -m budget_sid analyze_benefit --per-request outputs/leak_safe_beams/per_request.jsonl --summary outputs/leak_safe_beams/summary.json`. The validation pass that set `p2_worth_doing=true` is replayed offline by `docs/P2_OFFLINE_REPLAY.md`. That replay did not clear the random/entropy gate. The closed result is `docs/FINAL_RESULTS.md`.

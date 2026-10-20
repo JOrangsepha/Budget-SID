@@ -4,6 +4,8 @@
 
 The aggregates in this document still do not clear P2. A later SeetaCloud pass on the validation rows of `per_request.jsonl` did: `p2_worth_doing=true` (n=22363, positive Δ 0.926%, oracle nDCG@20 0.05911 > uniform beam 40 0.05750, mean beam about 20.37; uniform beam 60 does not beat beam 40). Those rows are not in git. The offline replay of that decision is `docs/P2_OFFLINE_REPLAY.md`. It is allocation quality, not a latency or online benefit-aware claim.
 
+0.05750 is the full validation set (n=22363), not validation split B. Do not set it next to the A/B-averaged routing table. That table, including fixed beam 20/40/60 on the same split-B requests (seeds 42/43/44), is `docs/FINAL_RESULTS.md`. Archived 2026-10-20: Ridge and HGB did not stably beat random or entropy, online routing stopped, and P3 was not started. The oracle row reads true Δ. It is a non-deployable upper bound (mean beam about 20.4 on split B), not a Budget-SID algorithm gain.
+
 ## Decision
 
 **The summary means do not clear P2.** The leak-safe Beauty summary does not show that a concentrated positive tail is large enough to continue.
