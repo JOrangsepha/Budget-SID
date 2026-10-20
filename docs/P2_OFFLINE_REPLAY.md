@@ -2,7 +2,9 @@
 
 P2.1 measures whether a model can spend a **pre-declared upgrade fraction** better than random and entropy. A fraction `f` upgrades that share of validation split B from beam 20 to beam 60. The declared average beam is `20 + 40 * f`. It is an offline allocation check on leak-safe validation labels.
 
-It is not a latency result. It does not run GridRecommender, it does not time decoding, and it does not claim that benefit-aware routing will raise Beauty nDCG online. P3 stays gated.
+It is not a latency result. It does not run GridRecommender, it does not time decoding, and it does not claim that benefit-aware routing will raise Beauty nDCG online.
+
+Archived 2026-10-20. On `checkpoint_epoch=000_step=018800.ckpt`, the four-feature arm and the boundary arm were both run at the declared fractions (0/1/5/10/25/50%, seeds 42/43/44). Ridge and HGB did not stably beat random or entropy on mean nDCG@20 or net Δ versus all-beam 20. Online routing development is stopped. No P3. The main table, with fixed beam 20/40/60 on that same validation-B set, is `docs/FINAL_RESULTS.md` (`docs/FINAL_RESULTS_TABLE.json`). Oracle stays in its own section: it reads true Δ, mean beam ≈20.4, and its lift is not a Budget-SID algorithm gain. Do not compare those split-B means to full-validation beam 40 (0.05750) or to the pooled leak-safe beam 20 (0.06356). Caches live on `/root/autodl-tmp/Budget-SID-archive-20261020/` and `/root/autodl-tmp/Budget-SID/`, with `BACKUP_OK.txt`, `HASHES_sha256.txt`, and `SPOTCHECK_json.txt`. They are not in git.
 
 ## Recorded validation pass
 
@@ -97,12 +99,12 @@ Ranks are 1-based. Rank 1 is the highest first-step probability. Ties keep the e
 
 ### Recorded narrow-quota result
 
-Both SeetaCloud replays below used the old narrow quota, `n_quota = min(n_positive on B, ceiling)`. Neither beat random and entropy. This checkout does not recompute them. P3 stays gated. P2.1 replaces that quota with the fixed-fraction curve. The four-feature file is still a valid replay. Boundary columns are an extra arm on the same curve. They are used when `boundary_features.jsonl` is joined. This repo does not invent a table that says they beat random or entropy.
+Both SeetaCloud replays below used the old narrow quota, `n_quota = min(n_positive on B, ceiling)`. Neither beat random and entropy. This checkout does not recompute that narrow quota. P2.1 replaces it with the fixed-fraction curve. That curve was run later; Ridge and HGB still did not stably beat random or entropy, so P3 was not started. The numbers are `docs/FINAL_RESULTS.md`. Boundary columns are an extra arm on the same curve. They are used when `boundary_features.jsonl` is joined. That arm also failed the same gate.
 
 | replay | what was joined | result under the narrow quota |
 | --- | --- | --- |
 | history length only | `history_length` from `target_position` | Ridge captured about 0% of the positive-Δ mass and tied or lost to random (nDCG@20 about 0.0566 versus about 0.0567). Entropy was skipped. |
-| four features | `history_length`, `first_step_entropy`, `candidate_prob_gap`, `top1_prob` | Benefit-aware did not beat random or entropy. This repo has no separate nDCG table for that run, and this change does not invent one. |
+| four features | `history_length`, `first_step_entropy`, `candidate_prob_gap`, `top1_prob` | Benefit-aware did not beat random or entropy under the narrow quota. The later fixed-fraction table is `docs/FINAL_RESULTS.md`, not a rewrite of this row. |
 
 Until `first_step_features.jsonl` is joined, a replay still behaves like the history-length row:
 
@@ -129,7 +131,7 @@ Pinned GRID `SemanticIDEncoderDecoder.generate` (commit `2fe3475`) computes hier
 
 If the logit tensor, the MLP, the checkpoint `state_dict`, or `user_id_list` is missing, the process exits non-zero and does not write a zero-filled file. A partial `load_state_dict` is refused, because a randomly initialized `decoder_mlp` would look like real logits.
 
-P3 stays gated until benefit-aware routing beats **both** random and entropy on primary `mean_ndcg@20` and `delta_vs_all_beam20` under the pre-declared fractions, and that ordering holds across seeds 42, 43, and 44. The narrow-quota replays above did not clear it. The four-feature fraction curve is the same gate. This dump does not start P3, does not time decoding, and does not claim an online win.
+The gate was: benefit-aware routing beats **both** random and entropy on primary `mean_ndcg@20` and `delta_vs_all_beam20` under the pre-declared fractions, and that ordering holds across seeds 42, 43, and 44. The narrow-quota replays did not clear it. The four-feature fraction curve and the boundary arm were the same gate, and they did not clear it either (`docs/FINAL_RESULTS.md`). This dump does not start P3, does not time decoding, and does not claim an online win. Online routing stopped.
 
 ### Hierarchy-0 logits cache and boundary features
 
@@ -227,7 +229,7 @@ python -m budget_sid replay_budgets \
   --output-dir outputs/p2_replay_boundary
 ```
 
-`--fractions` can be omitted; that list is the default. P3 stays gated until benefit beats both random and entropy on `mean_ndcg@20` and `delta_vs_all_beam20` at those fractions, stably across seeds 42, 43, and 44. This command does not decide that. It does not retrain the recommender.
+`--fractions` can be omitted; that list is the default. The archived run of this command did not beat random and entropy on `mean_ndcg@20` and `delta_vs_all_beam20` across seeds 42, 43, and 44 (`docs/FINAL_RESULTS.md`). Re-running it does not start P3 and does not retrain the recommender.
 
 `outputs/` is gitignored. The replay command writes `replay_summary.json`, `curve_summary.json`, and `assignments_seed<seed>.jsonl`. The dump also writes `first_step_features_manifest.json` beside the jsonl. CPU smoke, with the scripted recommender rather than GRID logits:
 
@@ -241,4 +243,4 @@ The logits smoke is a scripted CPU vector of width 64. It is not a Beauty GRID d
 
 ## What this is not
 
-No benefit-aware online result. No latency, throughput, or memory claim. No GridRecommender. No second decode. No P3. No invented logits, and no target-derived routing feature. The 2026-10-17 `tiger_inference_flat` rankings are not these labels. A ridge model cannot beat the positive-Δ oracle that already sees Δ on B; that oracle row is a bound, and its mean beam is the compute it used. The logits cache is produced on the GPU machine. This checkout does not contain it and does not claim the boundary arm beat random or entropy.
+No benefit-aware online result. No latency, throughput, or memory claim. No GridRecommender. No second decode. No P3. No invented logits, and no target-derived routing feature. The 2026-10-17 `tiger_inference_flat` rankings are not these labels. A ridge model cannot beat the positive-Δ oracle that already sees Δ on B; that oracle row is a bound, and its mean beam is the compute it used. The logits cache, checkpoint, `per_request.jsonl`, and SID tensor were produced on the GPU machine and archived at `/root/autodl-tmp/Budget-SID-archive-20261020/`. This git checkout does not contain those binaries. The boundary arm was run; it did not beat random or entropy. See `docs/FINAL_RESULTS.md`.

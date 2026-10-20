@@ -10,18 +10,62 @@ GRID 不放进本仓库，只用 `scripts/pin_grid.sh` 锁在 commit `2fe3475b2d
 
 范围就是预算分配，加上这条轻量 SID 生成式召回实验。TIGER 论文里的模型创新不归本仓库，这里的数字也不是 TIGER、Semantic ID 或 GRID 论文的复现结果。
 
-2026-10-17 在 SeetaCloud RTX 4090 上跑完的是前半段：冻结 MiniLM、RQ-KMeans、Semantic ID、`tiger_train_flat`、固定 beam 推理。按请求估计 ΔNDCG@20 的止损和路由还没接到 GRID 的推理输出上。写这份说明时没有再跑 GPU。
+2026-10-17 在 SeetaCloud RTX 4090 上跑完前半段：冻结 MiniLM、RQ-KMeans、Semantic ID、`tiger_train_flat`、固定 beam 推理。泄漏安全评测、P1 前提和 P2.1 离线回放后来也做完了。2026-10-20 的结论是收益预测没有稳定打赢随机或熵，线上路由停止，不启动 P3。写这份说明时没有再跑 GPU，也没有重训。
 
 ## English
 
-- Budget allocation plus a light SID generative-recall experiment on Amazon Beauty.
+- Budget allocation plus a light SID generative-recall experiment on Amazon Beauty. Online benefit routing is archived.
 - Pinned GRID commit `2fe3475b2d369580234093f35d52b1a2f54d0472`. GRID is not vendored.
-- 2026-10-17 SeetaCloud RTX 4090: fixed beams 20/40/60 finished (exit 0). Benefit-aware stop-gate is not wired to those GRID outputs.
-- P1 reads leak-safe `per_request.jsonl` when that file is present. The transcribed SeetaCloud summary does not clear P2. The validation pass did (`p2_worth_doing=true`). See `docs/P1_BENEFIT_ANALYSIS.md` and `docs/P2_OFFLINE_REPLAY.md`.
-- P2.1 is offline allocation quality on a pre-declared upgrade fraction of validation split B (default 0%, 1%, 5%, 10%, 25%, 50%; average beam = 20 + 40×fraction). Random, entropy, and benefit share that quota. Primary metrics are final nDCG@20 and net Δ versus all-beam 20. `n_positive_captured` and negative loss are explanatory. Seeds 42, 43, and 44 reshuffle the A/B split and the replay; they do not retrain the recommender. Under the old narrow quota (`min` of B's positive-Δ count and the beam-40 ceiling), both the history-length-only replay and the four-feature replay on SeetaCloud failed to beat random and entropy. P3 stays gated until benefit beats both random and entropy on those primary metrics under the pre-declared fractions, stably across seeds 42, 43, and 44. The boundary arm caches hierarchy-0 logits (`scripts/dump_first_step_logits.sh`, validation by default) and joins `top20_cum_prob`, `prob_gap_p20_p21`, and `prob_sum_ranks_21_60` through `replay_budgets --features`. This checkout does not run that GPU dump and does not claim the arm won. See `docs/P2_OFFLINE_REPLAY.md`.
-- P0 eval audit does not retrain and does not claim a benefit-aware gain. It exports leak-safe history/target samples and can score NDCG@5, NDCG@10, and NDCG@20 per request. See `docs/P0_EVAL_AUDIT.md`. The 2026-10-17 `tiger_inference_flat` rankings keep the target event in the encoder input, so they are not leak-safe ΔNDCG. Re-run beams with `scripts/run_leak_safe_beams.sh` on the exported history. The logged test nDCG@5 and nDCG@10 came from `NextKTokenMasking` and are not that leak.
+- 2026-10-17 SeetaCloud RTX 4090: fixed beams 20/40/60 finished (exit 0). That day's run did not wire a benefit-aware stop-gate to GRID outputs. The later offline replay did test Ridge and HGB on leak-safe labels. They did not stably beat random or entropy, so the online gate was not wired and P3 was not started.
+- P1 reads leak-safe `per_request.jsonl` when that file is present. The transcribed SeetaCloud summary does not clear P2. The validation pass did (`p2_worth_doing=true`). See `docs/P1_BENEFIT_ANALYSIS.md` and `docs/P2_OFFLINE_REPLAY.md`. The routing decision after that pass is the archive section below.
+- Archive (2026-10-20): on `checkpoint_epoch=000_step=018800.ckpt`, the tested features, and the declared upgrade fractions, Ridge and HGB did not stably beat random or entropy on mean nDCG@20 or net Δ versus all-beam 20. Online routing development is stopped. No P3, no recommender retrain, no Toys, no new features or predictors. The main table is validation split B, seeds 42/43/44, and it includes fixed beam 20/40/60 on that same set. Oracle reads true Δ and stays in its own section (mean beam ≈20.4). Numbers: `docs/FINAL_RESULTS.md` and `docs/FINAL_RESULTS_TABLE.json`. Large artifacts stay on the SeetaCloud data disk.
+- P0 eval audit does not retrain and does not claim a benefit-aware gain. It exports leak-safe history/target samples and can score NDCG@5, NDCG@10, and NDCG@20 per request. See `docs/P0_EVAL_AUDIT.md`. The 2026-10-17 `tiger_inference_flat` rankings keep the target event in the encoder input, so they are not leak-safe ΔNDCG. Beams were re-run with `scripts/run_leak_safe_beams.sh` on the exported history; those files are on the data disk, not in git. The logged test nDCG@5 and nDCG@10 came from `NextKTokenMasking` and are not that leak.
 - Checkpoint stays on the GPU machine. It is not in git.
 - Scripts log `SKIP_SHUTDOWN` and do not power the instance off.
+
+## 归档结论（2026-10-20）
+
+收益路由到这里停。不启动 P3，不重训推荐模型，不扩展 Toys，不再加特征或预测器。
+
+用的还是当前 Beauty checkpoint `checkpoint_epoch=000_step=018800.ckpt`。测过的特征是四特征（`history_length`、`first_step_entropy`、`candidate_prob_gap`、`top1_prob`）和边界特征（`top20_cum_prob`、`prob_gap_p20_p21`、`prob_sum_ranks_21_60`）。升级比例是事先声明的 0%、1%、5%、10%、25%、50%。在这个范围内，Ridge 和 HGB 没有在主指标上稳定优于 random 或 entropy。主指标是平均 nDCG@20，以及相对全体 beam 20 的净 Δ。线上路由不再做。
+
+主表和预算策略用同一批 validation split B（seeds 42、43、44，每 seed 大约 11182 条）。固定 beam 20/40/60 也是这批请求。不要拿全体验证集的 beam 40（0.05750）或全体 leak_safe（n=67089，beam 20 约 0.06356）和这张表比，那是另一批请求。完整主表在 `docs/FINAL_RESULTS.md`，同一份数字的 JSON 在 `docs/FINAL_RESULTS_TABLE.json`。
+
+同一 validation-B 上的固定 beam（跨 seed 的均值 ± 标准差）。正收益捕获和负收益损失对固定 beam 没有按策略去记，标成未测。净 Δ 是相对这批请求上的全体 beam 20。
+
+| 方法 | 升级比例 | 实际平均 beam | NDCG@20 | 正收益捕获 | 负收益损失 | 净收益 Δ vs all-beam20 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| fixed_beam20 | — | 20.0 | 0.05664±0.00126 | 未测 | 未测 | +0.00000 |
+| fixed_beam40 | — | 40.0 | 0.05755±0.00100 | 未测 | 未测 | +0.00091 |
+| fixed_beam60 | — | 60.0 | 0.05746±0.00092 | 未测 | 未测 | +0.00082 |
+
+random、entropy、ridge、hgb 在同一张表里，不在上表重复。ridge / hgb 没有稳定高于 random 或 entropy。升级比例 0.5 时，random 的 nDCG@20 是 0.05720±0.00104，entropy 是 0.05713±0.00108，ridge 是 0.05710±0.00105，hgb 是 0.05709±0.00102。其余比例见 `docs/FINAL_RESULTS.md`。
+
+Oracle 单独放，不进方法排名。它读的是真实 ΔNDCG@20，只升级正 Δ，剩下的名额不用负 Δ 或零 Δ 填满，所以实际平均 beam 大约 20.4。这是不可部署的上界。它的提升不是 Budget-SID 的算法提升。
+
+大文件不进 git：checkpoint、logits 的 npz、`per_request.jsonl`、SID 张量。它们在 SeetaCloud 数据盘：
+
+```text
+/root/autodl-tmp/Budget-SID-archive-20261020/
+/root/autodl-tmp/Budget-SID/
+```
+
+第一处是 2026-10-20 的归档副本（约 855M，含 P0 审计、leak-safe 逐请求、首步和边界特征与 logits、P1、各阶段 P2、ckpt、SID 映射、生效配置和日志）。第二处是同一块盘上的工作目录。完整性记在归档目录里的 `BACKUP_OK.txt`、`HASHES_sha256.txt`、`SPOTCHECK_json.txt`、`FILE_COUNTS.txt`。公开仓库只放复现命令和这两份小汇总。
+
+在数据盘上、已经有逐请求缓存时，用 CPU 重放比例曲线（不启 GPU，不重训）：
+
+```bash
+python -m budget_sid replay_budgets \
+  --per-request outputs/leak_safe_beams/per_request.jsonl \
+  --summary outputs/leak_safe_beams/summary.json \
+  --features outputs/leak_safe_beams/first_step_features.jsonl \
+  --user-protocol temporal_loo \
+  --seeds 42,43,44 \
+  --fractions 0,0.01,0.05,0.10,0.25,0.50 \
+  --output-dir outputs/p2_replay
+```
+
+边界特征把 `--features` 换成 `outputs/leak_safe_beams/boundary_features.jsonl`，输出目录用 `outputs/p2_replay_boundary`。固定 beam 20/40/60 是同一批 split-B 请求上 `per_request.jsonl` 的 beam 列。没有这些大文件时，`python -m budget_sid replay_budgets --smoke` 只跑合成烟雾测试，不会重算出上表。`artifacts/PROTOCOL_SUMMARY.json` 记的是 2026-10-17 当天的进度，里面的 `still_open` 不是这次归档结论。
 
 ## Beauty 流水线
 
@@ -98,7 +142,7 @@ logs/train/runs/2026-10-17/00-35-10/checkpoints/checkpoint_epoch=000_step=018800
 
 checkpoint 不进 git，太大。
 
-GRID 这次评测打的是 @5 和 @10。协议里的 Recall@20、NDCG@20、延迟和显存这次没有记，表里就不补。
+GRID 这次评测打的是 @5 和 @10。协议里的 Recall@20、NDCG@20、延迟和显存这次没有记，表里就不补。后来的泄漏安全打分才有 nDCG@20。路由结论用的是 validation split B 上的那组，见上面的归档结论，不要用这里的 @5 / @10 代替。
 
 | 切分 | nDCG@5 | nDCG@10 | Recall@5 | Recall@10 |
 | --- | ---: | ---: | ---: | ---: |
@@ -138,11 +182,13 @@ data_loading.predict_dataloader_config.dataloader.timeout=0
 
 脚本在退出时打印 `SKIP_SHUTDOWN`，不调用 autodl poweroff，也不调用 shutdown。2026-10-17 那台机器是故意留着开机的。
 
-## 预算分配（还没接上）
+## 预算分配（离线测完，线上已停）
 
 搜索宽度只在 {20, 40, 60} 里选，返回值始终是 Top-20。Beam 是搜索宽度，不是截断长度。
 
-计划中的做法：
+离线回放按下面这套规则测过。Ridge / HGB 没有稳定打赢 random 或 entropy，所以没有把收益预测接到线上的 GRID 推理里，P3 也没有启动。数字在 `docs/FINAL_RESULTS.md`。
+
+当时定下的做法：
 
 1. 所有请求共用同一次首步解码。
 2. 从首步取出历史长度、熵、top1 与 top2 的概率差、top1 概率。
@@ -152,7 +198,7 @@ data_loading.predict_dataloader_config.dataloader.timeout=0
 6. 同一 checkpoint 上比较固定 20 / 40 / 60、随机预算、按熵、收益感知。种子 42、43、44。全目录计算 Recall@20 和 NDCG@20，不用随机负例。切片包括长尾商品（频次最低 20%）和短历史用户（历史长度 ≤ 5）。
 7. 止损在验证集上做。大 beam 没有集中收益，或者理想预算分配打不赢全体 beam 40，进程退出码为 2。退出码 2 表示实验前提不成立，不是程序崩溃。
 
-这次 4090 只跑了固定 beam。请求级收益感知止损还没接到 GRID `tiger_inference` 的输出上。`evaluate_budgets` 不带 `--smoke` 时仍然只给命令计划（退出码 1）。
+2026-10-17 那次 4090 只跑了固定 beam，当时还没把请求级止损接到 GRID `tiger_inference` 上。后来的离线回放用泄漏安全标签把分配质量测完了，结论是停止，不再去接线上推理。`evaluate_budgets` 不带 `--smoke` 时仍然只给命令计划（退出码 1），不会自己重跑这张表。
 
 ## P0 评测审计
 
@@ -185,7 +231,7 @@ SID_PATH=/path/to/semantic_ids.pt bash scripts/run_leak_safe_beams.sh
 
 ## P1 止损
 
-泄漏安全汇总（`outputs/leak_safe_beams/summary.json`，n=67089）里，beam 60 的 nDCG@20 是 0.06418，beam 40 是 0.06425，平均 ΔnDCG@20（60−20）是 0.000618。这个均值本身不能放行 P2。逐条标签不在 git 里。SeetaCloud 上验证集的后续结果是 `p2_worth_doing=true`：n=22363，正 Δ 0.926%（207），零 97.50%，负 1.57%，oracle nDCG@20 0.05911，高于全体 beam 40 的 0.05750，平均 beam 约 20.37。全体 beam 60 不高于 beam 40。这组数是报告值，本仓库没有重算。机器上有 `per_request.jsonl` 时可以再核对：
+泄漏安全汇总（`outputs/leak_safe_beams/summary.json`，n=67089）里，beam 60 的 nDCG@20 是 0.06418，beam 40 是 0.06425，平均 ΔnDCG@20（60−20）是 0.000618。这个均值本身不能放行 P2。逐条标签不在 git 里。SeetaCloud 上全体验证集的后续结果是 `p2_worth_doing=true`：n=22363，正 Δ 0.926%（207），零 97.50%，负 1.57%，oracle nDCG@20 0.05911，高于全体验证 beam 40 的 0.05750，平均 beam 约 20.37。全体 beam 60 不高于 beam 40。0.05750 是全体验证行，不是归档主表里的 validation split B。主表见 `docs/FINAL_RESULTS.md`。这组全体验证数是报告值，本仓库没有重算。机器上有 `per_request.jsonl` 时可以再核对：
 
 ```bash
 python -m budget_sid analyze_benefit \
@@ -203,9 +249,11 @@ P2.1 只回答分配质量。验证用户分成不相交的 A / B。A 上用已�
 
 Oracle 上界单独报，只升级正 Δ，按 Δ 从高到低，花到正例用完或名额用完就停。剩下的名额留在 beam 20，不用负 Δ 去填满。它的平均 beam 是实际花掉的计算量。
 
-旧的窄名额是 `n_quota = min(B 上正 Δ 条数, 平均 beam 40 的上限)`。SeetaCloud 上两次回放都没能在这个名额下打赢随机和熵：只接 `history_length` 时，Ridge 大约抓到 0% 的正 Δ 质量，nDCG@20 约 0.0566，和随机的约 0.0567 打平或更差，熵比较被跳过；四特征（history length、熵、概率差、top1）那次同样没有打赢随机和熵。这组结论是报告值，本仓库没有重算，也不另造一张四特征的 nDCG 表。`--quota-mode positive_count` 还能复现那条窄名额，但默认已经换成固定比例。P3 仍然关上。
+旧的窄名额是 `n_quota = min(B 上正 Δ 条数, 平均 beam 40 的上限)`。SeetaCloud 上两次回放都没能在这个名额下打赢随机和熵：只接 `history_length` 时，Ridge 大约抓到 0% 的正 Δ 质量，nDCG@20 约 0.0566，和随机的约 0.0567 打平或更差，熵比较被跳过；四特征在那条窄名额下同样没有打赢随机和熵。`--quota-mode positive_count` 还能复现那条窄名额，但默认已经换成固定比例。
 
-`per_request.jsonl` 没有首步 logits。缺列写在 `full_p2_blockers` 里，不补假 logits。四特征的比例曲线可以在已经有的 `per_request.jsonl` 和 `first_step_features.jsonl` 上跑，这一步是 CPU。边界特征需要验证集上完整的第 0 层 logits，而不只是熵、gap、top1。`scripts/dump_first_step_logits.sh` 把向量缓存成 npz（默认只跑验证集；没有 `predict_rows.jsonl` 时先跑全量再丢掉非验证行），`extract_boundary_features` 在 CPU 上写出 `top20_cum_prob`、`prob_gap_p20_p21`、`prob_sum_ranks_21_60`，再用 `replay_budgets --features` 接上。`request_id` 对回放，`predict_key` 对 GRID 的 `user_id`。目标是否落在 top-20 里是事后归因，不进路由特征。P3 仍然关上：收益感知要在预先声明的比例上，按种子 42、43、44 稳定地同时打赢随机和熵的净 nDCG@20，这一次不声称已经打赢。
+固定比例曲线后来在同一 checkpoint 上跑完了。四特征（history length、熵、概率差、top1）和边界特征都没有在 seeds 42、43、44 上稳定打赢 random 和 entropy。主表包括同一 validation-B 上的固定 beam 20/40/60，见 `docs/FINAL_RESULTS.md`。P3 不启动。线上路由停止。
+
+`per_request.jsonl` 本身没有首步 logits。缺列写在 `full_p2_blockers` 里，不补假 logits。四特征曲线是在已有的 `per_request.jsonl` 和 `first_step_features.jsonl` 上用 CPU 跑的。边界特征用的是验证集第 0 层 logits：`scripts/dump_first_step_logits.sh` 把向量缓存成 npz（默认只跑验证集；没有 `predict_rows.jsonl` 时先跑全量再丢掉非验证行），`extract_boundary_features` 在 CPU 上写出 `top20_cum_prob`、`prob_gap_p20_p21`、`prob_sum_ranks_21_60`，再用 `replay_budgets --features` 接上。`request_id` 对回放，`predict_key` 对 GRID 的 `user_id`。目标是否落在 top-20 里是事后归因，不进路由特征。这些大文件在数据盘归档里，不在 git 里。边界臂也没有打赢 random 或 entropy。
 
 首步特征用泄漏安全的历史目录（目标事件不在历史里），按 `predict_index.jsonl` 的 `request_id` 顺序写出。GRID 的 `predict_step` 不返回 logits；dump 调用的是 pinned `generate()` 在第 0 层算出 `candidate_logits` 的那三步，然后停住。checkpoint 或张量缺失就非零退出，不写零向量。这不是延迟，也不是线上收益感知。
 
@@ -228,31 +276,30 @@ python -m budget_sid replay_budgets \
 
 ## TODO
 
-原来的 TODO(gpu) 分成两截。固定 beam 那几步已经在 SeetaCloud 上做完；收益止损还开着。
+收益路由在 2026-10-20 归档。下面已完成的是已经跑过的步骤。未测的不再排进下一次实验：不启动 P3，不重训，不扩展 Toys。
 
-已完成（SeetaCloud RTX 4090，2026-10-17，单卡，无 DDP）：
+已完成（SeetaCloud RTX 4090，单卡，无 DDP）：
 
 - [x] `bash scripts/pin_grid.sh`，HEAD 为 `2fe3475b2d369580234093f35d52b1a2f54d0472`
 - [x] 机器上准备了 `data/amazon_data/beauty/{training,evaluation,testing,items}`（不进 git）
 - [x] 冻结 MiniLM，384 维；没有加载 FLAN-T5-XL
 - [x] RQ-KMeans（3 个 codebook）+ SID，再训练 4+4 层、`d_model=128` 的生成模型；早停，最好的 `val/recall@5` ≈ 0.059
-- [x] 固定 beam / `top_k` 20、40、60 推理，退出码都是 0
-- [x] 离线 P2 窄名额诊断（SeetaCloud，报告值，本仓库未重算）：history-length-only 和四特征都没有在 `min(正 Δ 条数, ceiling)` 下打赢随机和熵。P3 仍然关上。见 `docs/P2_OFFLINE_REPLAY.md`。
+- [x] 固定 beam / `top_k` 20、40、60 推理，退出码都是 0（2026-10-17）
+- [x] 离线 P2 窄名额诊断：history-length-only 和四特征都没有在 `min(正 Δ 条数, ceiling)` 下打赢随机和熵。见 `docs/P2_OFFLINE_REPLAY.md`。
+- [x] P2.1 固定比例曲线（0/1/5/10/25/50%，seeds 42/43/44，validation split B）：四特征上的 Ridge / HGB 没有稳定优于 random 或 entropy。同一批请求上的固定 beam 20/40/60 写在 `docs/FINAL_RESULTS.md`。
+- [x] 边界特征臂（`top20_cum_prob`、`prob_gap_p20_p21`、`prob_sum_ranks_21_60`）同样没有稳定打赢 random 或 entropy。logits npz 在数据盘，不在 git。
+- [x] 止损结论：停止线上路由，不启动 P3。
 
-协议代码（CPU，这一次）：
+未测（归档范围之外，不再排期）：
 
-- [x] P2.1：预先声明的升级比例曲线（默认 0/1/5/10/25/50%），各策略同一名额，主指标是 nDCG@20 和相对全体 beam 20 的净 Δ。
-
-未完成：
-
-- [ ] 在已有的 `per_request.jsonl` 和 `first_step_features.jsonl` 上跑 P2.1 比例曲线（CPU）。P3 仍然关上。
-- [ ] 在 SeetaCloud 上跑 `scripts/dump_first_step_logits.sh`（验证集第 0 层 logits 缓存，再抽边界特征，然后跑比例曲线）。代码在这一次里。GPU 结果还不在仓库里。P3 仍然关上。
-- [ ] 复查 P0 `verified_with_truncation`（audited-with-truncation 那条截断窗口）。本提交不重跑 GPU 审计。见 `docs/P0_EVAL_AUDIT.md`。
-- [ ] 把请求级收益预测接到 GRID `tiger_inference` 的输出上（ΔNDCG@20）
-- [ ] 验证集 A 训练收益模型，B 上选平均 beam ≤ 40 的阈值
-- [ ] 在验证集上跑止损。退出码 2 就停，不要再加路由
-- [ ] 同一 checkpoint 上比较固定 20/40/60、随机、熵、收益感知
-- [ ] 三个种子，记录 Recall@20、NDCG@20、延迟均值 / P95、吞吐、峰值显存，以及长尾和短历史切片
+- [ ] 路由下的延迟、吞吐、峰值显存：未测
+- [ ] 按预算策略重训推荐模型：未测
+- [ ] Toys 或其他数据集：未测
+- [ ] 线上 A/B：未做
+- [ ] P3：未启动
+- [ ] 把收益预测接到 GRID `tiger_inference` 的在线输出上：未做。离线门已经没过，不再接。
+- [ ] 长尾商品和短历史切片：未测
+- [ ] 复查 P0 `verified_with_truncation`：本归档不重跑 GPU 审计。见 `docs/P0_EVAL_AUDIT.md`。
 
 ## 引用
 
